@@ -1,14 +1,7 @@
+#!/usr/bin/env python3
 """
-API v1 Router
-Endpoints para CrystoAPIVzla
+API v1
+Copyright 2024 CrystoAPIVzla Team
 """
 
-from fastapi import APIRouter
-from app.api.v1.endpoints import rates, health, admin
-
-api_router = APIRouter()
-
-# Incluir todos los endpoints
-api_router.include_router(rates.router, prefix="/rates", tags=["Cotizaciones"])
-api_router.include_router(health.router, prefix="/health", tags=["Monitoreo"])
-api_router.include_router(admin.router, prefix="/admin", tags=["Administración"])
+# Este archivo hace que el directorio v1 sea un paquete Python

@@ -13,12 +13,13 @@ sqlalchemy[asyncio]==2.0.23
 
 # Environment & Configuration
 python-dotenv==1.0.0
-pydantic[email]==2.5.0
-pydantic-settings==2.1.0
 
 # HTTP Client for external APIs
 httpx==0.25.2
 aiohttp==3.9.1
+
+# Cache (Redis)
+redis==6.4.0
 
 # Authentication & Security
 python-jose[cryptography]==3.3.0

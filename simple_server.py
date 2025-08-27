@@ -47,6 +47,15 @@ from app.services.data_fetcher import (
     _fetch_binance_p2p_sell_rates_no_save  # Versión que NO guarda en BD
 )
 
+# Importar funciones helper para respuestas consistentes
+from app.utils.response_helpers import (
+    create_success_response,
+    create_error_response,
+    create_server_error_response,
+    format_rate_data,
+    format_market_summary
+)
+
 # Cargar variables de entorno
 load_dotenv()
 
@@ -75,7 +84,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 @app.get("/")
 async def root():
     """Endpoint raíz"""
-    return {
+    data = {
         "message": "CrystoAPIVzla API Simple",
         "version": "1.0.0",
         "description": "Cotizaciones USDT/VES en tiempo real",
@@ -83,6 +92,7 @@ async def root():
         "docs": "/docs",
         "status": "operational"
     }
+    return create_success_response(data, "API funcionando correctamente")
 
 
 @app.get("/health")
@@ -90,18 +100,16 @@ async def health_check():
     """Health check simple para Railway"""
     try:
         # Health check básico sin verificar BD
-        return {
+        data = {
             "status": "healthy",
             "service": "crystoapivzla",
             "timestamp": datetime.now().isoformat(),
             "message": "Service is running"
         }
+        return create_success_response(data, "Servicio funcionando correctamente")
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        return create_server_error_response(f"Health check failed: {str(e)}")
 
 
 @app.get("/api/v1/rates/scrape-bcv")
@@ -114,10 +122,21 @@ async def scrape_bcv_live():
     """
     try:
         result = await scrape_bcv_rates()
-        return result
+        if result.get("status") == "success":
+            return create_success_response(
+                result.get("data", {}), 
+                "Scraping del BCV completado exitosamente"
+            )
+        else:
+            return create_error_response(
+                "BCV_SCRAPING_FAILED",
+                result.get("message", "Error en scraping del BCV"),
+                result.get("data", {}),
+                500
+            )
     except Exception as e:
         logger.error(f"Error en scraping del BCV: {e}")
-        raise HTTPException(status_code=500, detail=f"Error en scraping del BCV: {str(e)}")
+        return create_server_error_response(f"Error en scraping del BCV: {str(e)}")
 
 
 @app.get("/api/v1/rates/binance-p2p")

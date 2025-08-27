@@ -33,12 +33,26 @@ from asyncpg.connect_utils import re
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.services.database_service import DatabaseService
+from app.services.cache_service import cache_service
+from app.utils.response_helpers import (
+    create_success_response,
+    create_error_response,
+    create_server_error_response,
+    format_rate_data,
+    format_currency_response
+)
+from app.api.v1.endpoints.example import router as example_router
 
 # ==========================================
 # Configuración y constantes
 # ==========================================
+
+# Scheduler global para tareas automáticas
+scheduler = AsyncIOScheduler()
 
 # Configuración de la aplicación
 APP_CONFIG = {
@@ -254,8 +268,9 @@ warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 # Funciones de utilidad
 # ==========================================
 
+# Función legacy mantenida por compatibilidad - usar response_helpers.py para nuevos endpoints
 def create_response(status: str, data: Any = None, error: str = None, **kwargs) -> Dict[str, Any]:
-    """Crear respuesta estándar para la API."""
+    """Crear respuesta estándar para la API (legacy)."""
     response = {
         "status": status,
         "timestamp": datetime.now().isoformat()
@@ -283,6 +298,65 @@ app.add_middleware(
     **CORS_CONFIG
 )
 
+# Incluir routers
+app.include_router(example_router, prefix="/api/v1", tags=["examples"])
+
+# ==========================================
+# Funciones de invalidación de caché
+# ==========================================
+
+def invalidate_cache_task():
+    """Tarea programada para invalidar caché automáticamente."""
+    try:
+        cache_service.invalidate_all()
+        print(f"✅ Caché invalidado automáticamente - {datetime.now().isoformat()}")
+    except Exception as e:
+        print(f"❌ Error invalidando caché automáticamente: {str(e)}")
+
+# ==========================================
+# Eventos de aplicación
+# ==========================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Eventos de inicio de la aplicación."""
+    try:
+        # Inicializar conexión Redis
+        cache_service.connect()
+        print("✅ Conexión Redis establecida")
+        
+        # Configurar scheduler para invalidación automática cada 10 minutos
+        scheduler.add_job(
+            invalidate_cache_task,
+            trigger=IntervalTrigger(minutes=10),
+            id="cache_invalidation",
+            name="Invalidación automática de caché",
+            replace_existing=True
+        )
+        
+        # Iniciar scheduler
+        scheduler.start()
+        print("✅ Scheduler iniciado - Invalidación de caché cada 10 minutos")
+        
+    except Exception as e:
+        print(f"❌ Error en startup: {str(e)}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Eventos de cierre de la aplicación."""
+    try:
+        # Detener scheduler
+        if scheduler.running:
+            scheduler.shutdown()
+            print("✅ Scheduler detenido")
+        
+        # Cerrar conexión Redis
+        cache_service.disconnect()
+        print("✅ Conexión Redis cerrada")
+        
+    except Exception as e:
+        print(f"❌ Error en shutdown: {str(e)}")
+
 # ==========================================
 # Endpoints de la API
 # ==========================================
@@ -290,67 +364,56 @@ app.add_middleware(
 @app.get("/")
 async def root():
     """Endpoint raíz de la API."""
-    return create_response(
-        status="success",
-        data={
-            "message": "CrystoAPIVzla API Simple",
-            "version": "1.0.0",
-            "description": "Cotizaciones USDT/VES en tiempo real",
-            "sources": ["BCV", "Binance P2P"],
-            "docs": "/docs",
-            "status": "operational",
-            "environment": os.getenv("ENVIRONMENT", "development")
-        }
-    )
+    data = {
+        "message": "CrystoAPIVzla API Simple",
+        "version": "1.0.0",
+        "description": "Cotizaciones USDT/VES en tiempo real",
+        "sources": ["BCV", "Binance P2P"],
+        "docs": "/docs",
+        "status": "operational",
+        "environment": os.getenv("ENVIRONMENT", "development")
+    }
+    return create_success_response(data, "API funcionando correctamente")
 
 @app.get("/health")
 async def health_check():
     """Health check para Railway."""
     try:
-        return create_response(
-            status="success",
-            data={
-                "status": "healthy",
-                "service": "crystoapivzla",
-                "message": "Service is running",
-                "environment": os.getenv("ENVIRONMENT", "development"),
-                "database_url": "configured" if os.getenv("DATABASE_URL") else "not_configured"
-            }
-        )
+        data = {
+            "status": "healthy",
+            "service": "crystoapivzla",
+            "message": "Service is running",
+            "environment": os.getenv("ENVIRONMENT", "development"),
+            "database_url": "configured" if os.getenv("DATABASE_URL") else "not_configured"
+        }
+        return create_success_response(data, "Servicio funcionando correctamente")
     except Exception as e:
-        return create_response(
-            status="error",
-            error=str(e)
-        )
+        return create_server_error_response("HEALTH_CHECK_ERROR", f"Error en health check: {str(e)}")
 
 @app.get("/api/v1/status")
 async def get_status():
     """Estado del sistema."""
-    return create_response(
-        status="success",
-        data={
-            "service": "crystoapivzla",
-            "version": "1.0.0",
-            "environment": os.getenv("ENVIRONMENT", "development"),
-            "database_configured": bool(os.getenv("DATABASE_URL"))
-        }
-    )
+    data = {
+        "service": "crystoapivzla",
+        "version": "1.0.0",
+        "environment": os.getenv("ENVIRONMENT", "development"),
+        "database_configured": bool(os.getenv("DATABASE_URL"))
+    }
+    return create_success_response(data, "Estado del sistema obtenido exitosamente")
 
 @app.get("/api/v1/config")
 async def get_config():
     """Configuración del sistema (sin secretos)."""
-    return create_response(
-        status="success",
-        data={
-            "environment": os.getenv("ENVIRONMENT", "development"),
-            "log_level": os.getenv("LOG_LEVEL", "INFO"),
-            "api_debug": os.getenv("API_DEBUG", "false"),
-            "scheduler_enabled": os.getenv("SCHEDULER_ENABLED", "true"),
-            "redis_enabled": os.getenv("REDIS_ENABLED", "false"),
-            "bcv_api_url": os.getenv("BCV_API_URL", "not_configured"),
-            "binance_api_url": os.getenv("BINANCE_API_URL", "not_configured")
-        }
-    )
+    data = {
+        "environment": os.getenv("ENVIRONMENT", "development"),
+        "log_level": os.getenv("LOG_LEVEL", "INFO"),
+        "api_debug": os.getenv("API_DEBUG", "false"),
+        "scheduler_enabled": os.getenv("SCHEDULER_ENABLED", "true"),
+        "redis_enabled": os.getenv("REDIS_ENABLED", "false"),
+        "bcv_api_url": os.getenv("BCV_API_URL", "not_configured"),
+        "binance_api_url": os.getenv("BINANCE_API_URL", "not_configured")
+    }
+    return create_success_response(data, "Configuración obtenida exitosamente")
 
 # ==========================================
 # ENDPOINTS DE DEBUG ELIMINADOS PARA PRODUCCIÓN
@@ -909,6 +972,9 @@ async def get_current_rates(
             currency_pair=currency_pair
         )
         
+        # Formatear las respuestas según el formato específico solicitado
+        formatted_rates = [format_currency_response(rate) for rate in rates]
+        
         # IMPORTANTE: Guardar automáticamente las tasas obtenidas en rate_history
         # NOTA: Binance P2P ya se guarda automáticamente en get_binance_p2p_complete()
         # por lo que solo guardamos BCV y otros exchanges que no tengan guardado automático
@@ -932,8 +998,8 @@ async def get_current_rates(
         
         return {
             "status": "success",
-            "data": rates,
-            "count": len(rates),
+            "data": formatted_rates,
+            "count": len(formatted_rates),
             "source": "realtime_with_variations",
             "auto_saved_to_history": DATABASE_AVAILABLE,
             "timestamp": datetime.now().isoformat()
@@ -944,10 +1010,11 @@ async def get_current_rates(
             try:
                 db_rates = await DatabaseService.get_current_rates()
                 if db_rates:
+                    formatted_db_rates = [format_currency_response(rate) for rate in db_rates]
                     return {
                         "status": "success",
-                        "data": db_rates,
-                        "count": len(db_rates),
+                        "data": formatted_db_rates,
+                        "count": len(formatted_db_rates),
                         "source": "database_fallback",
                         "auto_saved_to_history": False,  # Ya están en BD
                         "timestamp": datetime.now().isoformat()
