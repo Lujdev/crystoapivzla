@@ -138,12 +138,14 @@ class CacheService:
             logger.error(f"Error recuperando cotizaciones actuales del caché: {e}")
             return None
     
-    def set_latest_rates(self, rates_data: List[Dict[str, Any]]) -> bool:
+    def set_latest_rates(self, rates_data: List[Dict[str, Any]], limit: int = 100, ttl_seconds: int = 300) -> bool:
         """
         Almacenar últimas cotizaciones en caché
         
         Args:
             rates_data: Lista de cotizaciones históricas
+            limit: Límite de registros para identificar el caché
+            ttl_seconds: Tiempo de vida del caché en segundos
             
         Returns:
             True si se almacenó correctamente, False en caso contrario
@@ -152,48 +154,52 @@ class CacheService:
             return False
             
         try:
-            key = self._generate_key("latest_rates")
+            key = self._generate_key("latest_rates", str(limit))
             
             # Agregar metadata
             cache_data = {
-                "data": rates_data,
+                "rates": rates_data,
                 "count": len(rates_data),
+                "limit": limit,
                 "timestamp": datetime.utcnow().isoformat(),
                 "cached_at": datetime.utcnow().isoformat()
             }
             
-            # Almacenar con TTL
+            # Almacenar con TTL personalizado
             self.redis_client.setex(
                 key,
-                settings.REDIS_TTL_LATEST_RATES,
+                ttl_seconds,
                 json.dumps(cache_data, ensure_ascii=False)
             )
             
-            logger.debug(f"Últimas cotizaciones almacenadas en caché: {key} ({len(rates_data)} registros)")
+            logger.debug(f"Últimas cotizaciones almacenadas en caché: {key} ({len(rates_data)} registros, TTL: {ttl_seconds}s)")
             return True
             
         except Exception as e:
             logger.error(f"Error almacenando últimas cotizaciones en caché: {e}")
             return False
     
-    def get_latest_rates(self) -> Optional[List[Dict[str, Any]]]:
+    def get_latest_rates(self, limit: int = 100) -> Optional[Dict[str, Any]]:
         """
         Recuperar últimas cotizaciones del caché
         
+        Args:
+            limit: Límite de registros para identificar el caché correcto
+            
         Returns:
-            Lista de cotizaciones si están en caché, None en caso contrario
+            Diccionario con datos de cotizaciones si están en caché, None en caso contrario
         """
         if not self.enabled or not self.redis_client:
             return None
             
         try:
-            key = self._generate_key("latest_rates")
+            key = self._generate_key("latest_rates", str(limit))
             cached_data = self.redis_client.get(key)
             
             if cached_data:
                 data = json.loads(cached_data)
                 logger.debug(f"Últimas cotizaciones recuperadas del caché: {key} ({data.get('count', 0)} registros)")
-                return data["data"]
+                return data
                 
             return None
             
