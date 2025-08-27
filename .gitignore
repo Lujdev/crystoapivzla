@@ -34,6 +34,7 @@ htmlcov/
 
 #rulesEditor
 .cursor/
+.trae/
 
 # Dependencias de paquetes
 /dist/

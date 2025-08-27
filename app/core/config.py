@@ -4,6 +4,7 @@ Manejo de variables de entorno con Pydantic Settings
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from typing import List, Optional
 import os
 
@@ -37,9 +38,23 @@ class Settings(BaseSettings):
     BCV_API_URL: str = "http://www.bcv.org.ve/"
     BINANCE_API_URL: str = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     
-    # Cache (Redis - opcional)
-    REDIS_URL: str = "redis://localhost:6379"
-    REDIS_ENABLED: bool = False
+    # Redis Cache Configuration
+    REDIS_URL: str = Field(
+        default="redis://localhost:6379/0",
+        description="URL de conexión a Redis para caché"
+    )
+    REDIS_ENABLED: bool = Field(
+        default=True,
+        description="Habilitar/deshabilitar caché Redis"
+    )
+    REDIS_TTL_CURRENT_RATES: int = Field(
+        default=600,
+        description="TTL en segundos para cotizaciones actuales (10 minutos)"
+    )
+    REDIS_TTL_LATEST_RATES: int = Field(
+        default=300,
+        description="TTL en segundos para historial de cotizaciones (5 minutos)"
+    )
     
     # Rate Limiting
     REQUESTS_PER_MINUTE: int = 60
@@ -53,8 +68,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:3001",
-        "https://crystoapivzla.com",
-"https://www.crystoapivzla.com"
+        "https://crystoapivzla.site",
+"https://www.crystoapivzla.site"
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     

@@ -37,6 +37,8 @@ crystoapivzla/
 
 ## 🚀 Instalación
 
+### Desarrollo Local
+
 ```bash
 # Clonar repositorio
 git clone <repository-url>
@@ -53,11 +55,87 @@ cp .env.example .env
 python simple_server_railway.py
 ```
 
+### Desarrollo con Docker
+
+```bash
+# Ejecutar con Docker Compose (incluye Redis)
+docker-compose up -d
+
+# Ver logs
+docker-compose logs -f
+
+# Acceder a Redis Commander (interfaz web)
+# http://localhost:8081 (admin/admin123)
+
+# Detener servicios
+docker-compose down
+```
+
+### Desarrollo con Redis Commander
+
+```bash
+# Ejecutar con herramientas de desarrollo
+docker-compose --profile tools up -d
+
+# Esto incluye Redis Commander para monitorear el caché
+```
+
+## 🚀 Desarrollo Local con Docker
+
+```bash
+# Ejecutar con Docker Compose (incluye Redis)
+docker-compose up -d
+
+# Ver logs
+docker-compose logs -f
+
+# Detener servicios
+docker-compose down
+
+# Ejecutar solo herramientas de desarrollo (Redis Commander)
+docker-compose --profile tools up -d
+```
+
+## ⚡ Sistema de Caché Redis
+
+La API implementa un sistema de caché Redis para optimizar el rendimiento:
+
+### 🔧 Características del Caché
+- **Caché automático** para cotizaciones actuales y históricas
+- **TTL configurable** (10 min para actuales, 5 min para históricas)
+- **Invalidación automática** cada 10 minutos
+- **Fallback a base de datos** si Redis no está disponible
+
+### 📊 Endpoints con Caché
+- `GET /api/v1/rates/current` - Cotizaciones actuales (TTL: 10 min)
+- `GET /api/v1/rates/history` - Historial de cotizaciones (TTL: 5 min)
+
+### 🛠️ Configuración Redis
+```bash
+# Variables de entorno para Redis
+REDIS_URL=redis://localhost:6379/0
+REDIS_ENABLED=true
+REDIS_TTL_CURRENT_RATES=600
+REDIS_TTL_LATEST_RATES=300
+```
+
+### 🔍 Monitoreo Redis
+Accede a Redis Commander en desarrollo:
+- URL: http://localhost:8081
+- Usuario: admin
+- Contraseña: admin123
+
 ## ⚙️ Variables de Entorno
 
 ```bash
 # Base de datos
 DATABASE_URL=postgresql://user:pass@host:port/db
+
+# Redis Cache
+REDIS_URL=redis://localhost:6379/0
+REDIS_ENABLED=true
+REDIS_TTL_CURRENT_RATES=600  # TTL para cotizaciones actuales (segundos)
+REDIS_TTL_LATEST_RATES=300   # TTL para cotizaciones históricas (segundos)
 
 # Entorno
 ENVIRONMENT=production  # production, development

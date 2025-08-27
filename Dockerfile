@@ -4,6 +4,17 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
+# Variables de entorno por defecto
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Variables de entorno para Redis (Railway las sobrescribirá)
+ENV REDIS_URL=redis://localhost:6379/0
+ENV REDIS_ENABLED=true
+ENV REDIS_TTL_CURRENT_RATES=600
+ENV REDIS_TTL_LATEST_RATES=300
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \

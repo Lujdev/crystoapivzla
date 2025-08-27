@@ -13,6 +13,7 @@ from app.core.database import get_db_session
 from app.models.rate_models import RateHistory, CurrentRate
 from app.models.exchange_models import Exchange, CurrencyPair
 from app.models.api_models import ApiLog
+from app.services.cache_service import cache_service
 
 
 class DatabaseService:
@@ -62,6 +63,11 @@ class DatabaseService:
                 )
                 
                 await session.commit()
+                
+                # Invalidar caché Redis después de guardar nuevos datos
+                await cache_service.invalidate_all_rates()
+                logger.debug("🗑️ Caché Redis invalidado después de guardar BCV rates")
+                
                 logger.info(f"✅ BCV rates guardados: USD={usd_ves}, EUR={eur_ves}")
                 return True
                 
@@ -128,6 +134,11 @@ class DatabaseService:
                     )
                 
                 await session.commit()
+                
+                # Invalidar caché Redis después de guardar nuevos datos
+                await cache_service.invalidate_all_rates()
+                logger.debug("🗑️ Caché Redis invalidado después de guardar Binance P2P rates")
+                
                 logger.info(f"✅ Binance P2P rates guardados: Buy={buy_price}, Sell={sell_price}")
                 return True
                 
@@ -246,9 +257,17 @@ class DatabaseService:
     @staticmethod
     async def get_latest_rates(limit: int = 100) -> List[Dict[str, Any]]:
         """
-        Obtener las últimas cotizaciones
+        Obtener las últimas cotizaciones con caché Redis
         """
         try:
+            # Intentar obtener desde caché Redis primero
+            cached_rates = await cache_service.get_latest_rates(limit)
+            if cached_rates:
+                logger.debug(f"✅ Historial de cotizaciones obtenido desde caché Redis (limit: {limit})")
+                return cached_rates.get("rates", [])
+            
+            # Si no hay caché, obtener desde base de datos
+            logger.debug(f"📊 Obteniendo historial desde base de datos (limit: {limit})")
             async for session in get_db_session():
                 stmt = select(RateHistory).order_by(
                     RateHistory.timestamp.desc()
@@ -257,7 +276,7 @@ class DatabaseService:
                 result = await session.execute(stmt)
                 rates = result.scalars().all()
                 
-                return [
+                rates_data = [
                     {
                         "id": rate.id,
                         "exchange_code": rate.exchange_code,
@@ -273,6 +292,12 @@ class DatabaseService:
                     for rate in rates
                 ]
                 
+                # Almacenar en caché Redis (TTL: 5 minutos = 300 segundos)
+                await cache_service.set_latest_rates(rates_data, limit, ttl_seconds=300)
+                logger.debug(f"💾 Historial almacenado en caché Redis (limit: {limit})")
+                
+                return rates_data
+                
         except Exception as e:
             logger.error(f"❌ Error obteniendo latest rates: {e}")
             return []
@@ -280,9 +305,17 @@ class DatabaseService:
     @staticmethod
     async def get_current_rates() -> List[Dict[str, Any]]:
         """
-        Obtener cotizaciones actuales
+        Obtener cotizaciones actuales con caché Redis
         """
         try:
+            # Intentar obtener desde caché Redis primero
+            cached_rates = await cache_service.get_current_rates()
+            if cached_rates:
+                logger.debug("✅ Cotizaciones actuales obtenidas desde caché Redis")
+                return cached_rates.get("rates", [])
+            
+            # Si no hay caché, obtener desde base de datos
+            logger.debug("📊 Obteniendo cotizaciones actuales desde base de datos")
             async for session in get_db_session():
                 stmt = select(CurrentRate).options(
                     selectinload(CurrentRate.exchange),
@@ -326,6 +359,10 @@ class DatabaseService:
                         "trend_1h": variation_data["trend_1h"],
                         "trend_24h": variation_data["trend_24h"]
                     })
+                
+                # Almacenar en caché Redis (TTL: 10 minutos = 600 segundos)
+                await cache_service.set_current_rates(rates_with_variation, ttl_seconds=600)
+                logger.debug("💾 Cotizaciones actuales almacenadas en caché Redis")
                 
                 return rates_with_variation
                 

@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # Aplicación FastAPI
+  crystodolar-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_ENABLED=true
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=true
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+    networks:
+      - crystodolar-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis Cache
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - crystodolar-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Redis Commander (Interfaz web para Redis - opcional)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+      - HTTP_USER=admin
+      - HTTP_PASSWORD=admin123
+    depends_on:
+      - redis
+    networks:
+      - crystodolar-network
+    restart: unless-stopped
+    profiles:
+      - tools  # Solo se ejecuta con: docker-compose --profile tools up
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  crystodolar-network:
+    driver: bridge
