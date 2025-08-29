@@ -512,11 +512,32 @@ Todas las respuestas incluyen:
 # development: info
 ```
 
+## 📋 Cambios Recientes
+
+### v1.0.1 - Correcciones y Mejoras
+
+#### ✅ Migración a FastAPI Lifespan Events
+- **Problema resuelto**: Deprecation warnings de `@app.on_event`
+- **Solución**: Migración completa a `lifespan` events de FastAPI
+- **Beneficios**: Compatibilidad con versiones futuras de FastAPI
+- **Archivos modificados**: `simple_server_railway.py`
+
+#### ✅ Corrección CacheService
+- **Problema resuelto**: Error `ttl_seconds` en `set_current_rates()`
+- **Solución**: Removido parámetro no soportado, usa TTL de configuración
+- **Beneficios**: Eliminación de errores en logs de producción
+- **Archivos modificados**: `app/services/database_service.py`
+
+#### 🔧 Mejoras Técnicas
+- Uso de `asynccontextmanager` para gestión de ciclo de vida
+- Configuración centralizada de TTL en Redis
+- Mejor manejo de recursos en startup/shutdown
+
 ## 🔧 Desarrollo
 
 ### Estructura de Código
 
-- **FastAPI** para la API web
+- **FastAPI** para la API web con lifespan events
 - **asyncpg** para conexiones a PostgreSQL
 - **BeautifulSoup** para scraping del BCV
 - **httpx** para llamadas HTTP asíncronas

@@ -27,6 +27,7 @@ import warnings
 import ssl
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+from contextlib import asynccontextmanager
 
 import asyncpg
 from asyncpg.connect_utils import re
@@ -290,7 +291,7 @@ def create_response(status: str, data: Any = None, error: str = None, **kwargs) 
 # Crear instancia de FastAPI
 # ==========================================
 
-app = FastAPI(**APP_CONFIG)
+app = FastAPI(lifespan=lifespan, **APP_CONFIG)
 
 # CORS
 app.add_middleware(
@@ -314,12 +315,13 @@ def invalidate_cache_task():
         print(f"❌ Error invalidando caché automáticamente: {str(e)}")
 
 # ==========================================
-# Eventos de aplicación
+# Eventos de aplicación con Lifespan
 # ==========================================
 
-@app.on_event("startup")
-async def startup_event():
-    """Eventos de inicio de la aplicación."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manejo de eventos de ciclo de vida de la aplicación."""
+    # Startup
     try:
         # Inicializar conexión Redis
         cache_service.connect()
@@ -340,10 +342,10 @@ async def startup_event():
         
     except Exception as e:
         print(f"❌ Error en startup: {str(e)}")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Eventos de cierre de la aplicación."""
+    
+    yield
+    
+    # Shutdown
     try:
         # Detener scheduler
         if scheduler.running:

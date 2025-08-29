@@ -360,8 +360,8 @@ class DatabaseService:
                         "trend_24h": variation_data["trend_24h"]
                     })
                 
-                # Almacenar en caché Redis (TTL: 10 minutos = 600 segundos)
-                cache_service.set_current_rates(rates_with_variation, ttl_seconds=600)
+                # Almacenar en caché Redis (TTL configurado en settings)
+                cache_service.set_current_rates(rates_with_variation)
                 logger.debug("💾 Cotizaciones actuales almacenadas en caché Redis")
                 
                 return rates_with_variation
