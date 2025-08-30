@@ -12,7 +12,7 @@ from datetime import datetime
 
 from app.core.config import settings
 from app.core.database import cleanup_old_data
-from app.services.data_fetcher import update_all_rates
+from app.services.data_fetcher import update_all_rates, scrape_bcv_rates, fetch_binance_p2p_complete
 
 
 # Instancia global del scheduler
@@ -42,7 +42,17 @@ def start_scheduler() -> None:
         misfire_grace_time=3600  # 1 hora de gracia si falla
     )
     
-    # Tarea 2: Actualizar cotizaciones BCV (cada hora)
+    # Tarea 2: Actualizar todas las cotizaciones (BCV + Binance) cada 5 minutos
+    scheduler.add_job(
+        func=scheduled_update_all_rates,
+        trigger=IntervalTrigger(minutes=5),
+        id="update_all_rates",
+        name="Actualizar todas las cotizaciones (BCV + Binance)",
+        replace_existing=True,
+        misfire_grace_time=60  # 1 minuto de gracia
+    )
+    
+    # Tarea 3: Actualizar solo cotizaciones BCV (cada hora como respaldo)
     scheduler.add_job(
         func=scheduled_update_bcv,
         trigger=IntervalTrigger(seconds=settings.BCV_UPDATE_INTERVAL),
@@ -52,7 +62,7 @@ def start_scheduler() -> None:
         misfire_grace_time=300  # 5 minutos de gracia
     )
     
-    # Tarea 3: Actualizar cotizaciones Binance P2P (cada 5 minutos)
+    # Tarea 4: Actualizar solo cotizaciones Binance P2P (cada 5 minutos como respaldo)
     scheduler.add_job(
         func=scheduled_update_binance,
         trigger=IntervalTrigger(seconds=settings.BINANCE_UPDATE_INTERVAL),
@@ -62,7 +72,7 @@ def start_scheduler() -> None:
         misfire_grace_time=60  # 1 minuto de gracia
     )
     
-    # Tarea 4: Health check de APIs externas (cada 10 minutos)
+    # Tarea 5: Health check de APIs externas (cada 10 minutos)
     scheduler.add_job(
         func=scheduled_health_check,
         trigger=IntervalTrigger(minutes=10),
@@ -147,34 +157,82 @@ async def scheduled_cleanup() -> None:
             await send_telegram_notification(f"❌ Error en limpieza automática: {e}")
 
 
-async def scheduled_update_bcv() -> None:
+async def scheduled_update_all_rates() -> None:
     """
-    Tarea programada: Actualizar cotizaciones BCV
-    Se ejecuta cada hora
+    Tarea programada principal: Actualizar todas las cotizaciones (BCV + Binance)
+    Se ejecuta cada 5 minutos
     """
+    from datetime import datetime
+    start_time = datetime.now()
+    
     try:
-        logger.info("🏦 Actualizando cotizaciones BCV...")
-        # TODO: Implementar scraping de BCV
-        # result = await update_bcv_rates()
-        logger.info("✅ Cotizaciones BCV actualizadas")
+        logger.info(f"🚀 [SCHEDULER] Iniciando actualización de todas las cotizaciones - {start_time.strftime('%H:%M:%S')}")
+        result = await update_all_rates()
+        
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        if result.get("bcv", {}).get("status") == "success" and result.get("binance_p2p", {}).get("status") == "success":
+            logger.info(f"✅ [SCHEDULER] Todas las cotizaciones actualizadas exitosamente en {duration:.2f}s")
+        else:
+            logger.warning(f"⚠️ [SCHEDULER] Algunas cotizaciones fallaron en {duration:.2f}s: {result}")
         
     except Exception as e:
-        logger.error(f"❌ Error actualizando BCV: {e}")
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        logger.error(f"❌ [SCHEDULER] Error actualizando todas las cotizaciones después de {duration:.2f}s: {e}")
+
+
+async def scheduled_update_bcv() -> None:
+    """
+    Tarea programada: Actualizar solo cotizaciones BCV (respaldo)
+    Se ejecuta cada hora
+    """
+    from datetime import datetime
+    start_time = datetime.now()
+    
+    try:
+        logger.info(f"🏦 [SCHEDULER-BCV] Iniciando scraping BCV - {start_time.strftime('%H:%M:%S')}")
+        result = await scrape_bcv_rates()
+        
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        if result.get("status") == "success":
+            logger.info(f"✅ [SCHEDULER-BCV] Cotizaciones BCV actualizadas en {duration:.2f}s")
+        else:
+            logger.error(f"❌ [SCHEDULER-BCV] Error en scraping BCV después de {duration:.2f}s: {result.get('error', 'Error desconocido')}")
+        
+    except Exception as e:
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        logger.error(f"❌ [SCHEDULER-BCV] Error actualizando BCV después de {duration:.2f}s: {e}")
 
 
 async def scheduled_update_binance() -> None:
     """
-    Tarea programada: Actualizar cotizaciones Binance P2P
+    Tarea programada: Actualizar solo cotizaciones Binance P2P (respaldo)
     Se ejecuta cada 5 minutos
     """
+    from datetime import datetime
+    start_time = datetime.now()
+    
     try:
-        logger.info("🟡 Actualizando cotizaciones Binance P2P...")
-        # TODO: Implementar API de Binance P2P
-        # result = await update_binance_rates()
-        logger.info("✅ Cotizaciones Binance P2P actualizadas")
+        logger.info(f"🟡 [SCHEDULER-BINANCE] Iniciando fetch Binance P2P - {start_time.strftime('%H:%M:%S')}")
+        result = await fetch_binance_p2p_complete()
+        
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        if result.get("status") == "success":
+            logger.info(f"✅ [SCHEDULER-BINANCE] Cotizaciones Binance P2P actualizadas en {duration:.2f}s")
+        else:
+            logger.error(f"❌ [SCHEDULER-BINANCE] Error en Binance P2P después de {duration:.2f}s: {result.get('error', 'Error desconocido')}")
         
     except Exception as e:
-        logger.error(f"❌ Error actualizando Binance P2P: {e}")
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        logger.error(f"❌ [SCHEDULER-BINANCE] Error actualizando Binance P2P después de {duration:.2f}s: {e}")
 
 
 async def scheduled_health_check() -> None:

@@ -39,6 +39,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.services.database_service import DatabaseService
 from app.services.cache_service import cache_service
+from app.core.scheduler import start_scheduler, stop_scheduler
 from app.utils.response_helpers import (
     create_success_response,
     create_error_response,
@@ -59,7 +60,7 @@ scheduler = AsyncIOScheduler()
 APP_CONFIG = {
     "title": "CrystoAPIVzla API Simple",
     "description": "API simplificada para cotizaciones USDT/VES",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "docs_url": "/docs",
     "redoc_url": "/redoc"
 }
@@ -313,6 +314,10 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         print("✅ Scheduler iniciado - Invalidación de caché cada 10 minutos")
         
+        # Iniciar scheduler de tareas de cotizaciones
+        start_scheduler()
+        print("✅ Scheduler de cotizaciones iniciado - Tareas cada 30 segundos (TESTING)")
+        
     except Exception as e:
         print(f"❌ Error en startup: {str(e)}")
     
@@ -320,6 +325,10 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     try:
+        # Detener scheduler de cotizaciones
+        stop_scheduler()
+        print("✅ Scheduler de cotizaciones detenido")
+        
         # Detener scheduler
         if scheduler.running:
             scheduler.shutdown()
@@ -966,67 +975,41 @@ async def get_current_rates(
     exchange_code: str = None,
     currency_pair: str = None
 ):
-    """Obtener cotizaciones actuales de USDT/VES con guardado automático en rate_history."""
-    # Siempre obtener datos en tiempo real para incluir variaciones calculadas
+    """Obtener cotizaciones actuales desde la tabla current_rates (sin web scraping)."""
     try:
-        rates = await rates_service.get_current_rates(
-            exchange_code=exchange_code,
-            currency_pair=currency_pair
-        )
-        
-        # Formatear las respuestas según el formato específico solicitado
-        formatted_rates = [format_currency_response(rate) for rate in rates]
-        
-        # IMPORTANTE: Guardar automáticamente las tasas obtenidas en rate_history
-        # NOTA: Binance P2P ya se guarda automáticamente en get_binance_p2p_complete()
-        # por lo que solo guardamos BCV y otros exchanges que no tengan guardado automático
-        if rates and DATABASE_AVAILABLE:
-            try:
-                # Filtrar tasas que ya se guardaron automáticamente
-                rates_to_save = []
-                for rate in rates:
-                    if rate.get('exchange_code') != 'binance_p2p':
-                        rates_to_save.append(rate)
-                
-                if rates_to_save:
-                    await _save_current_rates_to_history(rates_to_save)
-                    print(f"💾 Tasas adicionales guardadas en rate_history: {len(rates_to_save)} registros (excluyendo Binance P2P)")
-                else:
-                    print("⏭️ Todas las tasas ya se guardaron automáticamente (incluyendo Binance P2P)")
-                    
-            except Exception as save_error:
-                print(f"⚠️ Error guardando tasas adicionales en rate_history: {save_error}")
-                # Continuar sin fallar el endpoint principal
-        
-        return {
-            "status": "success",
-            "data": formatted_rates,
-            "count": len(formatted_rates),
-            "source": "realtime_with_variations",
-            "auto_saved_to_history": DATABASE_AVAILABLE,
-            "timestamp": datetime.now().isoformat()
-        }
+        # Obtener datos directamente desde la tabla current_rates
+        if DATABASE_AVAILABLE:
+            rates = await DatabaseService.get_current_rates()
+            
+            # Filtrar por exchange_code si se especifica
+            if exchange_code:
+                rates = [rate for rate in rates if rate.get('exchange_code') == exchange_code]
+            
+            # Filtrar por currency_pair si se especifica
+            if currency_pair:
+                rates = [rate for rate in rates if rate.get('currency_pair') == currency_pair]
+            
+            # Formatear las respuestas según el formato específico solicitado
+            formatted_rates = [format_currency_response(rate) for rate in rates]
+            
+            return {
+                "status": "success",
+                "data": formatted_rates,
+                "count": len(formatted_rates),
+                "source": "current_rates_table",
+                "cached": bool(cache_service.get_current_rates()),
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "error",
+                "error": "Base de datos no disponible",
+                "timestamp": datetime.now().isoformat()
+            }
     except Exception as e:
-        # Si falla el servicio en tiempo real, intentar desde BD como fallback
-        if not exchange_code and not currency_pair and DATABASE_AVAILABLE:
-            try:
-                db_rates = await DatabaseService.get_current_rates()
-                if db_rates:
-                    formatted_db_rates = [format_currency_response(rate) for rate in db_rates]
-                    return {
-                        "status": "success",
-                        "data": formatted_db_rates,
-                        "count": len(formatted_db_rates),
-                        "source": "database_fallback",
-                        "auto_saved_to_history": False,  # Ya están en BD
-                        "timestamp": datetime.now().isoformat()
-                    }
-            except Exception as db_error:
-                print(f"⚠️ Error obteniendo rates desde BD: {db_error}")
-        
         return {
             "status": "error",
-            "error": f"Error obteniendo cotizaciones: {str(e)}",
+            "error": f"Error obteniendo cotizaciones actuales: {str(e)}",
             "timestamp": datetime.now().isoformat()
         }
 
