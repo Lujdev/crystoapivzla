@@ -5,9 +5,12 @@ API para cotizaciones USDT/VES en tiempo real con guardado automático en base d
 ## 📋 Características
 
 - **Cotizaciones en tiempo real** de BCV y Binance P2P
-- **Guardado automático** en `rate_history` para análisis histórico
+- **Sistema de tareas programadas** que actualiza datos cada 5 minutos
+- **Guardado automático** en `rate_history` y `current_rates` para análisis histórico
 - **Comparación de exchanges** con cálculo de spreads
 - **Variaciones y tendencias** calculadas automáticamente
+- **Caché Redis** con TTL de 5 minutos para datos de tareas programadas
+- **Endpoints optimizados** que consultan solo la base de datos sin web scraping
 - **Optimizado para Railway** con configuración de producción
 
 ## 📊 Cálculo de Variaciones
@@ -103,12 +106,21 @@ La API implementa un sistema de caché Redis para optimizar el rendimiento:
 ### 🔧 Características del Caché
 - **Caché automático** para cotizaciones actuales y históricas
 - **TTL configurable** (10 min para actuales, 5 min para históricas)
+- **Caché de tareas programadas** con TTL de 5 minutos para datos de BCV y Binance
 - **Invalidación automática** cada 10 minutos
 - **Fallback a base de datos** si Redis no está disponible
 
 ### 📊 Endpoints con Caché
 - `GET /api/v1/rates/current` - Cotizaciones actuales (TTL: 10 min)
 - `GET /api/v1/rates/history` - Historial de cotizaciones (TTL: 5 min)
+- **Tareas programadas** - Datos de BCV y Binance P2P (TTL: 5 min)
+
+### 🔄 Sistema de Tareas Programadas
+- **Actualización automática** cada 5 minutos de BCV y Binance P2P
+- **Almacenamiento en Redis** con TTL de 5 minutos
+- **Guardado en base de datos** en `current_rates` y `rate_history`
+- **Ejecución en paralelo** para mayor eficiencia
+- **Logs detallados** para monitoreo y debugging
 
 ### 🛠️ Configuración Redis
 ```bash
@@ -207,7 +219,13 @@ Estado del sistema.
 ### 💰 Cotizaciones
 
 #### `GET /api/v1/rates/current`
-Obtener cotizaciones actuales con guardado automático.
+Obtener cotizaciones actuales desde la tabla `current_rates` (sin web scraping en tiempo real).
+
+**Características:**
+- **Consulta optimizada** solo a la base de datos
+- **Datos actualizados** por tareas programadas cada 5 minutos
+- **Variaciones calculadas** automáticamente (1h, 24h)
+- **Caché Redis** con TTL de 10 minutos
 
 **Parámetros:**
 - `exchange_code` (opcional): Filtrar por exchange (`bcv`, `binance_p2p`)
@@ -233,13 +251,18 @@ GET /api/v1/rates/current?exchange_code=bcv
       "sell_price": 35.85,
       "avg_price": 35.85,
       "variation_percentage": "+0.15%",
+      "variation_1h": "+0.08%",
+      "variation_24h": "+1.25%",
       "trend_main": "up",
-      "timestamp": "2024-01-15T10:30:00"
+      "trend_1h": "up",
+      "trend_24h": "up",
+      "timestamp": "2024-01-15T10:30:00",
+      "last_update": "2024-01-15T10:25:00"
     }
   ],
   "count": 1,
-  "source": "realtime_with_variations",
-  "auto_saved_to_history": true,
+  "source": "database_with_scheduled_updates",
+  "cache_hit": true,
   "timestamp": "2024-01-15T10:30:00"
 }
 ```
