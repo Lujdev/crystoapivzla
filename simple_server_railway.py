@@ -271,10 +271,10 @@ warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 # Función legacy mantenida por compatibilidad - usar response_helpers.py para nuevos endpoints
 def create_response(status: str, data: Any = None, error: str = None, **kwargs) -> Dict[str, Any]:
-    """Crear respuesta estándar para la API (legacy)."""
+    """Crear respuesta estándar para la API"""
     response = {
         "status": status,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.utcnow().isoformat() + "Z"
     }
     
     if data is not None:
@@ -286,33 +286,6 @@ def create_response(status: str, data: Any = None, error: str = None, **kwargs) 
     response.update(kwargs)
     
     return response
-
-# ==========================================
-# Crear instancia de FastAPI
-# ==========================================
-
-app = FastAPI(lifespan=lifespan, **APP_CONFIG)
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    **CORS_CONFIG
-)
-
-# Incluir routers
-app.include_router(example_router, prefix="/api/v1", tags=["examples"])
-
-# ==========================================
-# Funciones de invalidación de caché
-# ==========================================
-
-def invalidate_cache_task():
-    """Tarea programada para invalidar caché automáticamente."""
-    try:
-        cache_service.invalidate_all()
-        print(f"✅ Caché invalidado automáticamente - {datetime.now().isoformat()}")
-    except Exception as e:
-        print(f"❌ Error invalidando caché automáticamente: {str(e)}")
 
 # ==========================================
 # Eventos de aplicación con Lifespan
@@ -358,6 +331,33 @@ async def lifespan(app: FastAPI):
         
     except Exception as e:
         print(f"❌ Error en shutdown: {str(e)}")
+
+# ==========================================
+# Crear instancia de FastAPI
+# ==========================================
+
+app = FastAPI(lifespan=lifespan, **APP_CONFIG)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    **CORS_CONFIG
+)
+
+# Incluir routers
+app.include_router(example_router, prefix="/api/v1", tags=["examples"])
+
+# ==========================================
+# Funciones de invalidación de caché
+# ==========================================
+
+def invalidate_cache_task():
+    """Tarea programada para invalidar caché automáticamente."""
+    try:
+        cache_service.invalidate_all()
+        print(f"✅ Caché invalidado automáticamente - {datetime.now().isoformat()}")
+    except Exception as e:
+        print(f"❌ Error invalidando caché automáticamente: {str(e)}")
 
 # ==========================================
 # Endpoints de la API
