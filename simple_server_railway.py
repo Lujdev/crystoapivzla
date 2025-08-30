@@ -60,7 +60,7 @@ scheduler = AsyncIOScheduler()
 APP_CONFIG = {
     "title": "CrystoAPIVzla API Simple",
     "description": "API simplificada para cotizaciones USDT/VES",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "docs_url": "/docs",
     "redoc_url": "/redoc"
 }
