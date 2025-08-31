@@ -316,7 +316,7 @@ async def lifespan(app: FastAPI):
         
         # Iniciar scheduler de tareas de cotizaciones
         start_scheduler()
-        print("✅ Scheduler de cotizaciones iniciado - Tareas cada 30 segundos (TESTING)")
+        print("✅ Scheduler de cotizaciones iniciado")
         
     except Exception as e:
         print(f"❌ Error en startup: {str(e)}")
