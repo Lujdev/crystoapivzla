@@ -289,21 +289,6 @@ def create_response(status: str, data: Any = None, error: str = None, **kwargs) 
     return response
 
 # ==========================================
-# Crear instancia de FastAPI
-# ==========================================
-
-app = FastAPI(lifespan=lifespan, **APP_CONFIG)
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    **CORS_CONFIG
-)
-
-# Incluir routers
-app.include_router(example_router, prefix="/api/v1", tags=["examples"])
-
-# ==========================================
 # Funciones de invalidación de caché
 # ==========================================
 
@@ -321,6 +306,67 @@ def invalidate_cache_task():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Manejo de eventos de ciclo de vida de la aplicación."""
+    # Startup
+    try:
+        # Inicializar conexión Redis
+        cache_service.connect()
+        print("✅ Conexión Redis establecida")
+        
+        # Configurar scheduler para invalidación automática cada 10 minutos
+        scheduler.add_job(
+            invalidate_cache_task,
+            trigger=IntervalTrigger(minutes=10),
+            id="cache_invalidation",
+            name="Invalidación automática de caché",
+            replace_existing=True
+        )
+        
+        # Iniciar scheduler
+        scheduler.start()
+        print("✅ Scheduler iniciado - Invalidación de caché cada 10 minutos")
+        
+        # Iniciar scheduler de tareas de cotizaciones
+        start_scheduler()
+        print("✅ Scheduler de cotizaciones iniciado")
+        
+    except Exception as e:
+        print(f"❌ Error en startup: {str(e)}")
+    
+    yield
+    
+    # Shutdown
+    try:
+        # Detener scheduler de cotizaciones
+        stop_scheduler()
+        print("✅ Scheduler de cotizaciones detenido")
+        
+        # Detener scheduler
+        if scheduler.running:
+            scheduler.shutdown()
+            print("✅ Scheduler detenido")
+        
+        # Cerrar conexión Redis
+        cache_service.disconnect()
+        print("✅ Conexión Redis cerrada")
+        
+    except Exception as e:
+        print(f"❌ Error en shutdown: {str(e)}")
+
+# ==========================================
+# Crear instancia de FastAPI
+# ==========================================
+
+app = FastAPI(lifespan=lifespan, **APP_CONFIG)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    **CORS_CONFIG
+)
+
+# Incluir routers
+app.include_router(example_router, prefix="/api/v1", tags=["examples"])
     """Manejo de eventos de ciclo de vida de la aplicación."""
     # Startup
     try:
