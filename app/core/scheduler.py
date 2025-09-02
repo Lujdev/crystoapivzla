@@ -9,6 +9,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 import asyncio
 from datetime import datetime
+from typing import Any
 
 from app.core.config import settings
 from app.core.database import cleanup_old_data
@@ -42,12 +43,12 @@ def start_scheduler() -> None:
         misfire_grace_time=3600  # 1 hora de gracia si falla
     )
     
-    # Tarea 2: Actualizar todas las cotizaciones (BCV + Binance) cada 60 minutos
+    # Tarea 2: Actualizar todas las cotizaciones (BCV + Binance) cada 2 horas (OPTIMIZADO para Neon.tech)
     scheduler.add_job(
         func=scheduled_update_all_rates,
-        trigger=IntervalTrigger(minutes=60),
+        trigger=IntervalTrigger(hours=2),  # Reducir frecuencia de 1h a 2h para ahorrar cómputo
         id="update_all_rates",
-        name="Actualizar todas las cotizaciones (BCV + Binance)",
+        name="Actualizar todas las cotizaciones (BCV + Binance) - OPTIMIZADO",
         replace_existing=True,
         misfire_grace_time=3600  # 1 hora de gracia
     )
@@ -160,27 +161,137 @@ async def scheduled_cleanup() -> None:
 async def scheduled_update_all_rates() -> None:
     """
     Tarea programada principal: Actualizar todas las cotizaciones (BCV + Binance)
-    Se ejecuta cada 5 minutos
+    OPTIMIZADO para Neon.tech - Usa prepared statements y connection pooling
+    Se ejecuta cada 2 horas
     """
     from datetime import datetime
     start_time = datetime.now()
     
     try:
-        logger.info(f"🚀 [SCHEDULER] Iniciando actualización de todas las cotizaciones - {start_time.strftime('%H:%M:%S')}")
-        result = await update_all_rates()
+        logger.info(f"🚀 [SCHEDULER-OPTIMIZED] Iniciando actualización optimizada - {start_time.strftime('%H:%M:%S')}")
         
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        
-        if result.get("bcv", {}).get("status") == "success" and result.get("binance_p2p", {}).get("status") == "success":
-            logger.info(f"✅ [SCHEDULER] Todas las cotizaciones actualizadas exitosamente en {duration:.2f}s")
-        else:
-            logger.warning(f"⚠️ [SCHEDULER] Algunas cotizaciones fallaron en {duration:.2f}s: {result}")
+        # Usar servicio optimizado
+        try:
+            from app.core.database_optimized import optimized_db, init_optimized_db_pool
+            
+            # Asegurar que el pool esté iniciado
+            await init_optimized_db_pool()
+            
+            result = await update_all_rates_optimized()
+            
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            if result.get("bcv", {}).get("status") == "success" and result.get("binance_p2p", {}).get("status") == "success":
+                # Obtener estadísticas del pool
+                pool_stats = await optimized_db.get_pool_stats()
+                logger.info(f"✅ [SCHEDULER-OPTIMIZED] Actualización exitosa en {duration:.2f}s - Pool: {pool_stats['size']}/{pool_stats['max_size']} conexiones")
+            else:
+                logger.warning(f"⚠️ [SCHEDULER-OPTIMIZED] Algunas cotizaciones fallaron en {duration:.2f}s: {result}")
+                
+        except ImportError:
+            # Fallback al método original si hay problemas con el optimizado
+            logger.warning("⚠️ [SCHEDULER] Usando método original como fallback")
+            result = await update_all_rates()
+            
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            if result.get("bcv", {}).get("status") == "success" and result.get("binance_p2p", {}).get("status") == "success":
+                logger.info(f"✅ [SCHEDULER] Todas las cotizaciones actualizadas (fallback) en {duration:.2f}s")
+            else:
+                logger.warning(f"⚠️ [SCHEDULER] Algunas cotizaciones fallaron (fallback) en {duration:.2f}s: {result}")
         
     except Exception as e:
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
-        logger.error(f"❌ [SCHEDULER] Error actualizando todas las cotizaciones después de {duration:.2f}s: {e}")
+        logger.error(f"❌ [SCHEDULER-OPTIMIZED] Error actualizando cotizaciones después de {duration:.2f}s: {e}")
+
+
+async def update_all_rates_optimized() -> dict[str, Any]:
+    """
+    Versión optimizada de update_all_rates que usa prepared statements
+    """
+    results = {
+        "bcv": {"status": "pending"},
+        "binance_p2p": {"status": "pending"}
+    }
+    
+    # Importar servicios
+    from app.services.data_fetcher import scrape_bcv_rates, fetch_binance_p2p_complete
+    from app.core.database_optimized import optimized_db
+    
+    # Actualizar BCV
+    try:
+        logger.info("🏦 [SCHEDULER-OPT] Actualizando BCV...")
+        bcv_result = await scrape_bcv_rates()
+        results["bcv"] = bcv_result
+        
+        if bcv_result.get("status") == "success":
+            data = bcv_result.get("data", {})
+            
+            # Guardar usando prepared statements
+            if data.get("usd_ves"):
+                await optimized_db.upsert_current_rate_fast(
+                    "BCV", "USD/VES", data["usd_ves"], data["usd_ves"]
+                )
+                # También en historial si cambió significativamente
+                if await optimized_db.check_rate_changed_fast("BCV", "USD/VES", data["usd_ves"]):
+                    await optimized_db.insert_rate_history_fast(
+                        "BCV", "USD/VES", data["usd_ves"], data["usd_ves"], data["usd_ves"],
+                        source="scheduler_optimized", api_method="web_scraping", trade_type="official"
+                    )
+            
+            if data.get("eur_ves", 0) > 0:
+                await optimized_db.upsert_current_rate_fast(
+                    "BCV", "EUR/VES", data["eur_ves"], data["eur_ves"]
+                )
+                if await optimized_db.check_rate_changed_fast("BCV", "EUR/VES", data["eur_ves"]):
+                    await optimized_db.insert_rate_history_fast(
+                        "BCV", "EUR/VES", data["eur_ves"], data["eur_ves"], data["eur_ves"],
+                        source="scheduler_optimized", api_method="web_scraping", trade_type="official"
+                    )
+            
+            logger.info("✅ [SCHEDULER-OPT] BCV actualizado con prepared statements")
+        
+    except Exception as e:
+        logger.error(f"❌ [SCHEDULER-OPT] Error actualizando BCV: {e}")
+        results["bcv"] = {"status": "error", "error": str(e)}
+    
+    # Actualizar Binance P2P
+    try:
+        logger.info("🟡 [SCHEDULER-OPT] Actualizando Binance P2P...")
+        binance_result = await fetch_binance_p2p_complete()
+        results["binance_p2p"] = binance_result
+        
+        if binance_result.get("status") == "success":
+            data = binance_result.get("data", {})
+            
+            if data.get("buy_usdt") and data.get("sell_usdt"):
+                buy_price = data["buy_usdt"]["price"]
+                sell_price = data["sell_usdt"]["price"]
+                avg_price = (buy_price + sell_price) / 2
+                volume_24h = data.get("market_analysis", {}).get("volume_24h", 0)
+                
+                # Guardar usando prepared statements
+                await optimized_db.upsert_current_rate_fast(
+                    "BINANCE_P2P", "USDT/VES", buy_price, sell_price, volume_24h=volume_24h
+                )
+                
+                # También en historial si cambió significativamente
+                if await optimized_db.check_rate_changed_fast("BINANCE_P2P", "USDT/VES", avg_price):
+                    await optimized_db.insert_rate_history_fast(
+                        "BINANCE_P2P", "USDT/VES", buy_price, sell_price, avg_price, volume_24h,
+                        source="scheduler_optimized", api_method="official_api", trade_type="p2p"
+                    )
+            
+            logger.info("✅ [SCHEDULER-OPT] Binance P2P actualizado con prepared statements")
+        
+    except Exception as e:
+        logger.error(f"❌ [SCHEDULER-OPT] Error actualizando Binance P2P: {e}")
+        results["binance_p2p"] = {"status": "error", "error": str(e)}
+    
+    return results
 
 
 async def scheduled_update_bcv() -> None:
