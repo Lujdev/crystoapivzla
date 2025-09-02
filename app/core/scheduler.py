@@ -42,14 +42,14 @@ def start_scheduler() -> None:
         misfire_grace_time=3600  # 1 hora de gracia si falla
     )
     
-    # Tarea 2: Actualizar todas las cotizaciones (BCV + Binance) cada 5 minutos
+    # Tarea 2: Actualizar todas las cotizaciones (BCV + Binance) cada 60 minutos
     scheduler.add_job(
         func=scheduled_update_all_rates,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=60),
         id="update_all_rates",
         name="Actualizar todas las cotizaciones (BCV + Binance)",
         replace_existing=True,
-        misfire_grace_time=60  # 1 minuto de gracia
+        misfire_grace_time=3600  # 1 hora de gracia
     )
     
     # Tarea 3: Actualizar solo cotizaciones BCV (cada hora como respaldo)
@@ -59,23 +59,23 @@ def start_scheduler() -> None:
         id="update_bcv_rates",
         name="Actualizar cotizaciones BCV",
         replace_existing=True,
-        misfire_grace_time=300  # 5 minutos de gracia
+        misfire_grace_time=3600  # 1 hora de gracia
     )
     
-    # Tarea 4: Actualizar solo cotizaciones Binance P2P (cada 5 minutos como respaldo)
+    # Tarea 4: Actualizar solo cotizaciones Binance P2P (cada hora como respaldo)
     scheduler.add_job(
         func=scheduled_update_binance,
         trigger=IntervalTrigger(seconds=settings.BINANCE_UPDATE_INTERVAL),
         id="update_binance_rates",
         name="Actualizar cotizaciones Binance P2P",
         replace_existing=True,
-        misfire_grace_time=60  # 1 minuto de gracia
+        misfire_grace_time=3600  # 1 hora de gracia
     )
     
-    # Tarea 5: Health check de APIs externas (cada 10 minutos)
+    # Tarea 5: Health check de APIs externas (cada 14 minutos)
     scheduler.add_job(
         func=scheduled_health_check,
-        trigger=IntervalTrigger(minutes=10),
+        trigger=IntervalTrigger(minutes=14),
         id="health_check_apis",
         name="Health check APIs externas",
         replace_existing=True
