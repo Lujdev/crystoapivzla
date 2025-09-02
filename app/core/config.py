@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     
     # Data Sources Config
     BCV_UPDATE_INTERVAL: int = 3600  # 1 hora
-    BINANCE_UPDATE_INTERVAL: int = 300  # 5 minutos
+    BINANCE_UPDATE_INTERVAL: int = 3600  # 1 hora
     MAX_RETRIES: int = 3
     TIMEOUT_SECONDS: int = 30
     
