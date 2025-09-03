@@ -69,7 +69,7 @@ PREPARED_QUERIES = {
     "upsert_current_rate": """
         INSERT INTO current_rates (exchange_code, currency_pair, buy_price, sell_price, avg_price,
                                  variation_24h, volume_24h, source, last_update, market_status)
-        VALUES ($1, $2, $3, $4, ($3 + $4) / 2, $5, $6, $7, NOW(), 'active')
+        VALUES ($1, $2, $3::DECIMAL, $4::DECIMAL, ($3::DECIMAL + $4::DECIMAL) / 2, $5::DECIMAL, $6::DECIMAL, $7, NOW(), 'active')
         ON CONFLICT (exchange_code, currency_pair) 
         DO UPDATE SET 
             buy_price = EXCLUDED.buy_price,
