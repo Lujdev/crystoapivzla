@@ -233,7 +233,8 @@ async def update_all_rates_optimized() -> dict[str, Any]:
             # Guardar usando prepared statements
             if data.get("usd_ves"):
                 await optimized_db.upsert_current_rate_fast(
-                    "BCV", "USD/VES", data["usd_ves"], data["usd_ves"]
+                    "BCV", "USD/VES", data["usd_ves"], data["usd_ves"],
+                    source="bcv_web_scraping"
                 )
                 # También en historial si cambió significativamente
                 if await optimized_db.check_rate_changed_fast("BCV", "USD/VES", data["usd_ves"]):
@@ -244,7 +245,8 @@ async def update_all_rates_optimized() -> dict[str, Any]:
             
             if data.get("eur_ves", 0) > 0:
                 await optimized_db.upsert_current_rate_fast(
-                    "BCV", "EUR/VES", data["eur_ves"], data["eur_ves"]
+                    "BCV", "EUR/VES", data["eur_ves"], data["eur_ves"],
+                    source="bcv_web_scraping"
                 )
                 if await optimized_db.check_rate_changed_fast("BCV", "EUR/VES", data["eur_ves"]):
                     await optimized_db.insert_rate_history_fast(
@@ -275,7 +277,8 @@ async def update_all_rates_optimized() -> dict[str, Any]:
                 
                 # Guardar usando prepared statements
                 await optimized_db.upsert_current_rate_fast(
-                    "BINANCE_P2P", "USDT/VES", buy_price, sell_price, volume_24h=volume_24h
+                    "BINANCE_P2P", "USDT/VES", buy_price, sell_price, volume_24h=volume_24h,
+                    source="binance_p2p_scheduler"
                 )
                 
                 # También en historial si cambió significativamente

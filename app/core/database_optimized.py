@@ -32,41 +32,52 @@ POOL_CONFIG = {
 
 # Prepared statements para consultas frecuentes
 PREPARED_QUERIES = {
-    # Consultas de current_rates
+    # Consultas de current_rates con todos los campos necesarios
     "get_current_rates": """
-        SELECT cr.exchange_code, cr.currency_pair, cr.buy_price, cr.sell_price, 
-               cr.variation_24h, cr.volume_24h, cr.last_update, cr.market_status
+        SELECT cr.id, cr.exchange_code, cr.currency_pair, cr.buy_price, cr.sell_price, cr.avg_price,
+               cr.variation_24h, cr.volume_24h, cr.source, cr.market_status, cr.last_update,
+               COALESCE(cp.base_currency, '') as base_currency, 
+               COALESCE(cp.quote_currency, '') as quote_currency
         FROM current_rates cr 
+        LEFT JOIN currency_pairs cp ON cr.currency_pair = cp.symbol
         WHERE cr.market_status = 'active'
         ORDER BY cr.exchange_code, cr.currency_pair
     """,
     
     "get_current_rate_by_exchange": """
-        SELECT cr.exchange_code, cr.currency_pair, cr.buy_price, cr.sell_price,
-               cr.variation_24h, cr.volume_24h, cr.last_update, cr.market_status
+        SELECT cr.id, cr.exchange_code, cr.currency_pair, cr.buy_price, cr.sell_price, cr.avg_price,
+               cr.variation_24h, cr.volume_24h, cr.source, cr.market_status, cr.last_update,
+               COALESCE(cp.base_currency, '') as base_currency, 
+               COALESCE(cp.quote_currency, '') as quote_currency
         FROM current_rates cr 
+        LEFT JOIN currency_pairs cp ON cr.currency_pair = cp.symbol
         WHERE cr.exchange_code = $1 AND cr.market_status = 'active'
         ORDER BY cr.currency_pair
     """,
     
     "get_current_rate_filtered": """
-        SELECT cr.exchange_code, cr.currency_pair, cr.buy_price, cr.sell_price,
-               cr.variation_24h, cr.volume_24h, cr.last_update, cr.market_status
+        SELECT cr.id, cr.exchange_code, cr.currency_pair, cr.buy_price, cr.sell_price, cr.avg_price,
+               cr.variation_24h, cr.volume_24h, cr.source, cr.market_status, cr.last_update,
+               COALESCE(cp.base_currency, '') as base_currency, 
+               COALESCE(cp.quote_currency, '') as quote_currency
         FROM current_rates cr 
+        LEFT JOIN currency_pairs cp ON cr.currency_pair = cp.symbol
         WHERE cr.exchange_code = $1 AND cr.currency_pair = $2 AND cr.market_status = 'active'
     """,
     
     # Operaciones de escritura optimizadas
     "upsert_current_rate": """
-        INSERT INTO current_rates (exchange_code, currency_pair, buy_price, sell_price, 
-                                 variation_24h, volume_24h, last_update, market_status)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'active')
+        INSERT INTO current_rates (exchange_code, currency_pair, buy_price, sell_price, avg_price,
+                                 variation_24h, volume_24h, source, last_update, market_status)
+        VALUES ($1, $2, $3, $4, ($3 + $4) / 2, $5, $6, $7, NOW(), 'active')
         ON CONFLICT (exchange_code, currency_pair) 
         DO UPDATE SET 
             buy_price = EXCLUDED.buy_price,
             sell_price = EXCLUDED.sell_price,
+            avg_price = (EXCLUDED.buy_price + EXCLUDED.sell_price) / 2,
             variation_24h = EXCLUDED.variation_24h,
             volume_24h = EXCLUDED.volume_24h,
+            source = EXCLUDED.source,
             last_update = NOW(),
             market_status = 'active'
     """,
@@ -211,14 +222,23 @@ class OptimizedDatabaseService:
                 
                 return [
                     {
-                        "exchange_code": row["exchange_code"],
-                        "currency_pair": row["currency_pair"],
-                        "buy_price": float(row["buy_price"]) if row["buy_price"] else None,
-                        "sell_price": float(row["sell_price"]) if row["sell_price"] else None,
+                        "id": int(row["id"]) if row["id"] else 0,
+                        "exchange_code": row["exchange_code"] or "",
+                        "currency_pair": row["currency_pair"] or "",
+                        "base_currency": row["base_currency"] or "",
+                        "quote_currency": row["quote_currency"] or "",
+                        "buy_price": float(row["buy_price"]) if row["buy_price"] else 0.0,
+                        "sell_price": float(row["sell_price"]) if row["sell_price"] else 0.0,
+                        "avg_price": float(row["avg_price"]) if row["avg_price"] else 0.0,
                         "variation_24h": float(row["variation_24h"]) if row["variation_24h"] else 0,
-                        "volume_24h": float(row["volume_24h"]) if row["volume_24h"] else None,
-                        "last_update": row["last_update"].isoformat() if row["last_update"] else None,
-                        "market_status": row["market_status"]
+                        "volume_24h": float(row["volume_24h"]) if row["volume_24h"] else 0.0,
+                        "source": row["source"] or "api",
+                        "trade_type": "general",  # Campo fijo para compatibilidad
+                        "timestamp": row["last_update"].isoformat() if row["last_update"] else "",
+                        "market_status": row["market_status"] or "active",
+                        "variation_percentage": f"{float(row['variation_24h']) if row['variation_24h'] else 0:+.2f}%",
+                        "trend_main": "stable" if not row["variation_24h"] or float(row["variation_24h"]) == 0 
+                                     else ("up" if float(row["variation_24h"]) > 0 else "down")
                     }
                     for row in rows
                 ]
@@ -234,7 +254,8 @@ class OptimizedDatabaseService:
         buy_price: float,
         sell_price: float,
         variation_24h: float = 0,
-        volume_24h: float | None = None
+        volume_24h: float | None = None,
+        source: str = "api"
     ) -> bool:
         """
         Insertar/actualizar current_rate usando prepared statement
@@ -248,7 +269,8 @@ class OptimizedDatabaseService:
                     buy_price,
                     sell_price,
                     variation_24h,
-                    volume_24h or 0
+                    volume_24h or 0,
+                    source
                 )
                 return True
                 
