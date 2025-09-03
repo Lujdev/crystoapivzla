@@ -158,7 +158,7 @@ def check_dependencies():
     # Verificar DatabaseService
     try:
         # Importar servicios optimizados para Supabase
-from app.core.database_optimized import optimized_db
+        from app.core.database_optimized import optimized_db
         from app.core.database import get_db_session
         DATABASE_AVAILABLE = True
         print("✅ DatabaseService disponible")

@@ -9,7 +9,8 @@ from loguru import logger
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
-from app.core.database import get_db_session
+# Importar servicios optimizados para Supabase
+from app.core.database_optimized import optimized_db
 from app.models.rate_models import RateHistory, CurrentRate
 from app.models.exchange_models import Exchange, CurrencyPair
 from app.models.api_models import ApiLog
@@ -24,57 +25,28 @@ class DatabaseService:
     @staticmethod
     async def save_bcv_rates(usd_ves: float, eur_ves: float, source_data: Dict[str, Any]) -> bool:
         """
-        Guardar cotizaciones del BCV usando asyncpg directo (compatible con Supabase)
+        Guardar cotizaciones del BCV usando OptimizedDatabaseService (compatible con Supabase)
         """
         try:
-            # Importar el pool optimizado
-            from app.core.database_optimized import get_pool
+            # Usar OptimizedDatabaseService para Supabase Transaction Mode
+            success_usd = await optimized_db.upsert_current_rate_fast(
+                "BCV", "USD/VES", usd_ves, usd_ves, 0.0, 0.0, "bcv_scrape"
+            )
             
-            # Usar asyncpg directo en lugar de SQLAlchemy
-            pool = await get_pool()
-            async with pool.acquire() as conn:
-                # Guardar en historial
-                rate_history = RateHistory(
-                    exchange_code="BCV",
-                    currency_pair="USD/VES",
-                    buy_price=usd_ves,
-                    sell_price=usd_ves,  # BCV tiene un solo precio
-                    avg_price=usd_ves,
-                    source="bcv",
-                    api_method="web_scraping",
-                    timestamp=datetime.now()
-                )
-                session.add(rate_history)
-                
-                # Guardar EUR también
-                eur_history = RateHistory(
-                    exchange_code="BCV",
-                    currency_pair="EUR/VES",
-                    buy_price=eur_ves,
-                    sell_price=eur_ves,
-                    avg_price=eur_ves,
-                    source="bcv",
-                    api_method="web_scraping",
-                    timestamp=datetime.now()
-                )
-                session.add(eur_history)
-                
-                # Actualizar cotizaciones actuales
-                await DatabaseService._update_current_rate(
-                    session, "BCV", "USD/VES", usd_ves, usd_ves, usd_ves
-                )
-                await DatabaseService._update_current_rate(
-                    session, "BCV", "EUR/VES", eur_ves, eur_ves, eur_ves
-                )
-                
-                await session.commit()
-                
+            success_eur = await optimized_db.upsert_current_rate_fast(
+                "BCV", "EUR/VES", eur_ves, eur_ves, 0.0, 0.0, "bcv_scrape"
+            )
+            
+            if success_usd and success_eur:
                 # Invalidar caché Redis después de guardar nuevos datos
                 cache_service.invalidate_all()
                 logger.debug("🗑️ Caché Redis invalidado después de guardar BCV rates")
                 
                 logger.info(f"✅ BCV rates guardados: USD={usd_ves}, EUR={eur_ves}")
                 return True
+            else:
+                logger.error("❌ Error guardando BCV rates con OptimizedDatabaseService")
+                return False
                 
         except Exception as e:
             logger.error(f"❌ Error guardando BCV rates: {e}")
@@ -154,61 +126,36 @@ class DatabaseService:
     @staticmethod
     async def save_binance_p2p_complete_rates(binance_data: Dict[str, Any]) -> bool:
         """
-        Guardar cotizaciones COMPLETAS de Binance P2P (ambos precios simultáneamente)
+        Guardar cotizaciones completas de Binance P2P usando OptimizedDatabaseService
         """
         try:
-            async for session in get_db_session():
-                # Extraer datos del endpoint complete
-                buy_data = binance_data.get("buy_usdt", {})
-                sell_data = binance_data.get("sell_usdt", {})
-                market_analysis = binance_data.get("market_analysis", {})
+            # Obtener precios de compra y venta
+            buy_data = binance_data.get("buy_usdt", {})
+            sell_data = binance_data.get("sell_usdt", {})
+            
+            buy_price = buy_data.get("price", 0)
+            sell_price = sell_data.get("price", 0)
+            
+            if buy_price > 0 and sell_price > 0:
+                # Calcular promedio general
+                general_avg = (buy_price + sell_price) / 2
+                volume_24h = binance_data.get("market_analysis", {}).get("volume_24h", 0)
                 
-                # Precios
-                buy_price = buy_data.get("price")
-                sell_price = sell_data.get("price")
-                buy_avg = buy_data.get("avg_price")
-                sell_avg = sell_data.get("avg_price")
+                # Usar OptimizedDatabaseService para Supabase Transaction Mode
+                success = await optimized_db.upsert_current_rate_fast(
+                    "BINANCE_P2P", "USDT/VES", 
+                    buy_price, sell_price, 0.0, volume_24h, "binance_p2p_complete"
+                )
                 
-                # Volumen combinado
-                volume_24h = market_analysis.get("volume_24h", 0)
-                source = binance_data.get("source", "binance_p2p")
-                
-                # Guardar UNA SOLA LÍNEA con ambos precios
-                if buy_price and sell_price:
-                    complete_history = RateHistory(
-                        exchange_code="BINANCE_P2P",
-                        currency_pair="USDT/VES",
-                        buy_price=buy_price,
-                        sell_price=sell_price,
-                        avg_price=(buy_price + sell_price) / 2,  # Promedio de ambos precios
-                        volume_24h=volume_24h,
-                        source=source,
-                        api_method="official_api",
-                        trade_type="complete_usdt",  # Indicar que es un registro completo
-                        timestamp=datetime.now()
-                    )
-                    session.add(complete_history)
-                    
-                    logger.info(f"✅ Registro COMPLETO guardado: Buy={buy_price}, Sell={sell_price}")
-                else:
-                    logger.warning(f"⚠️ No se pudieron obtener ambos precios para guardar registro completo")
-                
-                # Actualizar cotizaciones actuales con AMBOS precios
-                if buy_price and sell_price:
-                    # Calcular precio promedio general
-                    general_avg = (buy_price + sell_price) / 2
-                    
-                    await DatabaseService._update_current_rate(
-                        session, "BINANCE_P2P", "USDT/VES", 
-                        buy_price, sell_price, general_avg, volume_24h
-                    )
-                    
+                if success:
                     logger.info(f"✅ Binance P2P COMPLETE rates guardados: Buy={buy_price}, Sell={sell_price}, Avg={general_avg}")
+                    return True
                 else:
-                    logger.warning(f"⚠️ No se pudieron obtener ambos precios para actualizar current_rates")
-                
-                await session.commit()
-                return True
+                    logger.error("❌ Error guardando Binance P2P COMPLETE rates con OptimizedDatabaseService")
+                    return False
+            else:
+                logger.warning(f"⚠️ No se pudieron obtener ambos precios para actualizar current_rates")
+                return False
                 
         except Exception as e:
             logger.error(f"❌ Error guardando Binance P2P COMPLETE rates: {e}")
