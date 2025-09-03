@@ -1,11 +1,11 @@
 """
-Configuración optimizada de base de datos para Neon.tech
-Reducir consumo de tiempo de cómputo con connection pooling y prepared statements
+Configuración optimizada de base de datos para Supabase
+Connection pooling compatible con Supabase Transaction Mode (sin prepared statements)
 """
 
 import asyncpg
 import asyncio
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, Optional
 from contextlib import asynccontextmanager
 from loguru import logger
 from datetime import datetime
@@ -13,25 +13,25 @@ import json
 
 from app.core.config import settings
 
-# Pool de conexiones global optimizado para Neon.tech
+# Pool de conexiones global optimizado para Supabase
 _connection_pool: asyncpg.Pool | None = None
-_prepared_statements_cache: dict[str, str] = {}
+# Nota: Supabase Transaction Mode NO soporta prepared statements
 
-# Configuración optimizada para Neon.tech
+# Configuración optimizada para Supabase Transaction Mode
 POOL_CONFIG = {
-    "min_size": 2,          # Mínimo 2 conexiones (reducir de 5)
-    "max_size": 8,          # Máximo 8 conexiones (reducir de 15)
-    "max_queries": 50000,   # Cache de prepared statements
-    "max_inactive_connection_lifetime": 300.0,  # 5 min (igual que antes)
+    "min_size": 1,          # Mínimo 1 conexión (Supabase maneja el pooling)
+    "max_size": 3,          # Máximo 3 conexiones (Transaction Mode es más eficiente)
+    "max_queries": 1000,    # Reducido significativamente 
+    "max_inactive_connection_lifetime": 60.0,  # 1 min (Transaction Mode es más eficiente)
     "command_timeout": 30,  # Timeout de comandos
     "server_settings": {
-        "application_name": "crystoapivzla_optimized",
-        "shared_preload_libraries": "",
+        "application_name": "crystoapivzla_supabase",
     }
 }
 
-# Prepared statements para consultas frecuentes
-PREPARED_QUERIES = {
+# Consultas SQL reutilizables para Supabase (sin prepared statements)
+# Nota: Supabase Transaction Mode no soporta prepared statements
+OPTIMIZED_QUERIES = {
     # Consultas de current_rates con todos los campos necesarios
     "get_current_rates": """
         SELECT cr.id, cr.exchange_code, cr.currency_pair, cr.buy_price, cr.sell_price, cr.avg_price,
@@ -109,7 +109,7 @@ PREPARED_QUERIES = {
 
 async def init_optimized_db_pool() -> asyncpg.Pool:
     """
-    Inicializar pool de conexiones optimizado para Neon.tech
+    Inicializar pool de conexiones optimizado para Supabase Transaction Mode
     """
     global _connection_pool
     
@@ -118,47 +118,32 @@ async def init_optimized_db_pool() -> asyncpg.Pool:
         return _connection_pool
     
     try:
-        # Extraer componentes de la URL de Neon.tech
-        database_url = settings.DATABASE_URL
-        logger.info("🔄 Iniciando pool de conexiones optimizado para Neon.tech...")
+        # URL de Supabase con Transaction Mode
+        database_url = settings.database_url_async
+        logger.info("🔄 Iniciando pool de conexiones optimizado para Supabase Transaction Mode...")
         
-        # Crear pool con configuración optimizada
+        # Crear pool con configuración optimizada para Supabase
+        # IMPORTANTE: statement_cache_size=0 para deshabilitar prepared statements
         _connection_pool = await asyncpg.create_pool(
             database_url,
+            statement_cache_size=0,  # CRITICAL: Deshabilitar prepared statements para Supabase Transaction Mode
             **POOL_CONFIG
         )
         
-        # Preparar statements frecuentes
-        await _prepare_common_statements()
+        # NOTA: NO preparar statements (Supabase Transaction Mode no los soporta)
         
-        logger.info(f"✅ Pool optimizado iniciado - Min: {POOL_CONFIG['min_size']}, Max: {POOL_CONFIG['max_size']}")
-        logger.info(f"💾 {len(PREPARED_QUERIES)} prepared statements creados")
+        logger.info(f"✅ Pool Supabase iniciado - Min: {POOL_CONFIG['min_size']}, Max: {POOL_CONFIG['max_size']}")
+        logger.info("ℹ️ Transaction Mode: prepared statements deshabilitados")
         
         return _connection_pool
         
     except Exception as e:
-        logger.error(f"❌ Error inicializando pool optimizado: {e}")
+        logger.error(f"❌ Error inicializando pool de Supabase: {e}")
         raise
 
 
-async def _prepare_common_statements():
-    """
-    Preparar statements comunes para mejor rendimiento
-    """
-    global _connection_pool, _prepared_statements_cache
-    
-    try:
-        async with _connection_pool.acquire() as conn:
-            for stmt_name, query in PREPARED_QUERIES.items():
-                try:
-                    prepared = await conn.prepare(query)
-                    _prepared_statements_cache[stmt_name] = query
-                    logger.debug(f"✅ Prepared statement: {stmt_name}")
-                except Exception as e:
-                    logger.error(f"❌ Error preparing {stmt_name}: {e}")
-                    
-    except Exception as e:
-        logger.error(f"❌ Error preparando statements: {e}")
+# Función eliminada: _prepare_common_statements()
+# Supabase Transaction Mode no soporta prepared statements
 
 
 async def close_optimized_db_pool():
@@ -171,6 +156,18 @@ async def close_optimized_db_pool():
         await _connection_pool.close()
         _connection_pool = None
         logger.info("✅ Pool de conexiones cerrado")
+
+
+async def get_pool() -> Optional[asyncpg.Pool]:
+    """
+    Obtener pool de conexiones optimizado para Supabase
+    """
+    global _connection_pool
+    
+    if _connection_pool is None:
+        await init_optimized_db_pool()
+    
+    return _connection_pool
 
 
 @asynccontextmanager
@@ -193,8 +190,8 @@ async def get_optimized_connection():
 
 class OptimizedDatabaseService:
     """
-    Servicio de base de datos optimizado para Neon.tech
-    Usa asyncpg directo con prepared statements y connection pooling eficiente
+    Servicio de base de datos optimizado para Supabase Transaction Mode
+    Usa asyncpg directo con connection pooling eficiente (sin prepared statements)
     """
     
     @staticmethod
@@ -203,22 +200,19 @@ class OptimizedDatabaseService:
         currency_pair: str | None = None
     ) -> list[dict[str, Any]]:
         """
-        Obtener current_rates usando prepared statements optimizados
+        Obtener current_rates usando queries optimizadas para Supabase Transaction Mode
         """
         try:
             async with get_optimized_connection() as conn:
                 if exchange_code and currency_pair:
                     # Query más específico
-                    stmt = await conn.prepare(PREPARED_QUERIES["get_current_rate_filtered"])
-                    rows = await stmt.fetch(exchange_code.upper(), currency_pair.upper())
+                    rows = await conn.fetch(OPTIMIZED_QUERIES["get_current_rate_filtered"], exchange_code.upper(), currency_pair.upper())
                 elif exchange_code:
                     # Query por exchange
-                    stmt = await conn.prepare(PREPARED_QUERIES["get_current_rate_by_exchange"])
-                    rows = await stmt.fetch(exchange_code.upper())
+                    rows = await conn.fetch(OPTIMIZED_QUERIES["get_current_rate_by_exchange"], exchange_code.upper())
                 else:
                     # Query general
-                    stmt = await conn.prepare(PREPARED_QUERIES["get_current_rates"])
-                    rows = await stmt.fetch()
+                    rows = await conn.fetch(OPTIMIZED_QUERIES["get_current_rates"])
                 
                 return [
                     {
@@ -244,7 +238,7 @@ class OptimizedDatabaseService:
                 ]
                 
         except Exception as e:
-            logger.error(f"❌ Error obteniendo current_rates optimizado: {e}")
+            logger.error(f"❌ Error obteniendo current_rates de Supabase: {e}")
             return []
     
     @staticmethod
@@ -258,12 +252,12 @@ class OptimizedDatabaseService:
         source: str = "api"
     ) -> bool:
         """
-        Insertar/actualizar current_rate usando prepared statement
+        Insertar/actualizar current_rate usando query directa en Supabase
         """
         try:
             async with get_optimized_connection() as conn:
-                stmt = await conn.prepare(PREPARED_QUERIES["upsert_current_rate"])
-                await stmt.fetchval(
+                await conn.fetchval(
+                    OPTIMIZED_QUERIES["upsert_current_rate"],
                     exchange_code.upper(),
                     currency_pair.upper(), 
                     buy_price,
@@ -275,7 +269,7 @@ class OptimizedDatabaseService:
                 return True
                 
         except Exception as e:
-            logger.error(f"❌ Error upsert current_rate optimizado: {e}")
+            logger.error(f"❌ Error upsert current_rate en Supabase: {e}")
             return False
     
     @staticmethod
@@ -291,12 +285,12 @@ class OptimizedDatabaseService:
         trade_type: str = "general"
     ) -> bool:
         """
-        Insertar en rate_history usando prepared statement
+        Insertar en rate_history usando query directa en Supabase
         """
         try:
             async with get_optimized_connection() as conn:
-                stmt = await conn.prepare(PREPARED_QUERIES["insert_rate_history"])
-                await stmt.fetchval(
+                await conn.fetchval(
+                    OPTIMIZED_QUERIES["insert_rate_history"],
                     exchange_code.upper(),
                     currency_pair.upper(),
                     buy_price,
@@ -310,18 +304,17 @@ class OptimizedDatabaseService:
                 return True
                 
         except Exception as e:
-            logger.error(f"❌ Error insert rate_history optimizado: {e}")
+            logger.error(f"❌ Error insert rate_history en Supabase: {e}")
             return False
     
     @staticmethod
     async def get_latest_rates_fast(limit: int = 100) -> list[dict[str, Any]]:
         """
-        Obtener rate_history usando prepared statement
+        Obtener rate_history usando query directa en Supabase
         """
         try:
             async with get_optimized_connection() as conn:
-                stmt = await conn.prepare(PREPARED_QUERIES["get_latest_rates"])
-                rows = await stmt.fetch(limit)
+                rows = await conn.fetch(OPTIMIZED_QUERIES["get_latest_rates"], limit)
                 
                 return [
                     {
@@ -339,7 +332,7 @@ class OptimizedDatabaseService:
                 ]
                 
         except Exception as e:
-            logger.error(f"❌ Error get_latest_rates optimizado: {e}")
+            logger.error(f"❌ Error get_latest_rates en Supabase: {e}")
             return []
     
     @staticmethod
@@ -350,12 +343,11 @@ class OptimizedDatabaseService:
         tolerance: float = 0.0001
     ) -> bool:
         """
-        Verificar si una tasa cambió usando prepared statement
+        Verificar si una tasa cambió usando query directa en Supabase
         """
         try:
             async with get_optimized_connection() as conn:
-                stmt = await conn.prepare(PREPARED_QUERIES["check_rate_changed"])
-                row = await stmt.fetchrow(exchange_code.upper(), currency_pair.upper())
+                row = await conn.fetchrow(OPTIMIZED_QUERIES["check_rate_changed"], exchange_code.upper(), currency_pair.upper())
                 
                 if not row:
                     return True  # Es nueva, insertar
@@ -379,13 +371,13 @@ class OptimizedDatabaseService:
                 return True  # Si no hay precio anterior, insertar
                 
         except Exception as e:
-            logger.error(f"❌ Error check_rate_changed optimizado: {e}")
+            logger.error(f"❌ Error check_rate_changed en Supabase: {e}")
             return True
     
     @staticmethod
     async def get_pool_stats() -> dict[str, Any]:
         """
-        Obtener estadísticas del pool de conexiones
+        Obtener estadísticas del pool de conexiones Supabase
         """
         global _connection_pool
         
@@ -398,7 +390,8 @@ class OptimizedDatabaseService:
             "min_size": _connection_pool.get_min_size(),
             "max_size": _connection_pool.get_max_size(),
             "idle_size": _connection_pool.get_idle_size(),
-            "prepared_statements": len(_prepared_statements_cache)
+            "mode": "transaction_mode",
+            "prepared_statements": 0  # Disabled in Transaction Mode
         }
 
 

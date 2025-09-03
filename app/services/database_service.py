@@ -24,10 +24,15 @@ class DatabaseService:
     @staticmethod
     async def save_bcv_rates(usd_ves: float, eur_ves: float, source_data: Dict[str, Any]) -> bool:
         """
-        Guardar cotizaciones del BCV
+        Guardar cotizaciones del BCV usando asyncpg directo (compatible con Supabase)
         """
         try:
-            async for session in get_db_session():
+            # Importar el pool optimizado
+            from app.core.database_optimized import get_pool
+            
+            # Usar asyncpg directo en lugar de SQLAlchemy
+            pool = await get_pool()
+            async with pool.acquire() as conn:
                 # Guardar en historial
                 rate_history = RateHistory(
                     exchange_code="BCV",
