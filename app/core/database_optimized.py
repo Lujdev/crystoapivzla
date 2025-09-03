@@ -234,7 +234,7 @@ class OptimizedDatabaseService:
         buy_price: float,
         sell_price: float,
         variation_24h: float = 0,
-        volume_24h: Optional[float] = None
+        volume_24h: float | None = None
     ) -> bool:
         """
         Insertar/actualizar current_rate usando prepared statement
@@ -263,7 +263,7 @@ class OptimizedDatabaseService:
         buy_price: float,
         sell_price: float,
         avg_price: float,
-        volume_24h: Optional[float] = None,
+        volume_24h: float | None = None,
         source: str = "api",
         api_method: str = "fetch",
         trade_type: str = "general"
@@ -292,7 +292,7 @@ class OptimizedDatabaseService:
             return False
     
     @staticmethod
-    async def get_latest_rates_fast(limit: int = 100) -> List[dict[str, Any]]:
+    async def get_latest_rates_fast(limit: int = 100) -> list[dict[str, Any]]:
         """
         Obtener rate_history usando prepared statement
         """

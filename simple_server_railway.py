@@ -1162,7 +1162,7 @@ async def get_current_rates(
         
         # Actualizar caché Redis si obtuvimos datos frescos
         if rates and not (exchange_code or currency_pair):
-            cache_service.set_current_rates(rates, ttl_seconds=600)  # 10 minutos
+            cache_service.set_current_rates(rates)  # Usar TTL predeterminado
         
         execution_time = (datetime.now() - start_time).total_seconds()
         
