@@ -1114,11 +1114,13 @@ async def get_current_rates(
                         data = bcv_result.get("data", {})
                         if data.get("usd_ves"):
                             await optimized_db.upsert_current_rate_fast(
-                                "BCV", "USD/VES", data["usd_ves"], data["usd_ves"]
+                                "BCV", "USD/VES", data["usd_ves"], data["usd_ves"],
+                                source="bcv_web_scraping"
                             )
                         if data.get("eur_ves", 0) > 0:
                             await optimized_db.upsert_current_rate_fast(
-                                "BCV", "EUR/VES", data["eur_ves"], data["eur_ves"] 
+                                "BCV", "EUR/VES", data["eur_ves"], data["eur_ves"],
+                                source="bcv_web_scraping"
                             )
                         print(f"✅ BCV actualizado y guardado en DB optimizada")
                     else:
@@ -1143,7 +1145,8 @@ async def get_current_rates(
                             sell_price = data["sell_usdt"]["price"]
                             await optimized_db.upsert_current_rate_fast(
                                 "BINANCE_P2P", "USDT/VES", buy_price, sell_price,
-                                volume_24h=data.get("market_analysis", {}).get("volume_24h", 0)
+                                volume_24h=data.get("market_analysis", {}).get("volume_24h", 0),
+                                source="binance_p2p_api"
                             )
                         print(f"✅ Binance P2P actualizado y guardado en DB optimizada")
                     else:

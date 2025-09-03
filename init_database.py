@@ -48,7 +48,7 @@ async def insert_initial_data():
                     name="Banco Central de Venezuela",
                     type="centralized",
                     description="Banco central oficial de Venezuela",
-                    operating_hours="24/7",
+                    operating_"24/7",
                     update_frequency="daily",
                     website="https://www.bcv.org.ve/"
                 ),
