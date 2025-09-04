@@ -15,12 +15,12 @@ class Settings(BaseSettings):
     Compatible con Neon.tech y despliegue en producción
     """
     
-    # Database (Neon.tech)
-    DATABASE_URL: str = "postgresql://localhost/crystoapivzla"
-    NEON_ENDPOINT: Optional[str] = None
-    NEON_DATABASE: str = "crystoapivzla"
-    NEON_USERNAME: Optional[str] = None
-    NEON_PASSWORD: Optional[str] = None
+    # Database (Supabase)
+    DATABASE_URL: str = "postgresql://postgres.vgrnjwzbmpmqekaylbdq:EP50wb7WXmucInTH@aws-1-us-east-2.pooler.supabase.com:6543/postgres"
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_ANON_KEY: Optional[str] = None
+    # Connection for migrations (Session mode)
+    DIRECT_DATABASE_URL: str = "postgresql://postgres.vgrnjwzbmpmqekaylbdq:EP50wb7WXmucInTH@aws-1-us-east-2.pooler.supabase.com:5432/postgres"
     
     # API Configuration
     API_HOST: str = "0.0.0.0"
@@ -111,17 +111,18 @@ class Settings(BaseSettings):
     
     @property
     def database_url_async(self) -> str:
-        """URL de base de datos para conexiones asíncronas"""
-        # Para asyncpg, necesitamos limpiar parámetros SSL que no reconoce
-        base_url = self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
-        
-        # Remover parámetros SSL problemáticos para asyncpg
-        if "sslmode" in base_url:
-            # Extraer solo la parte principal de la URL
-            if "?" in base_url:
-                base_url = base_url.split("?")[0]
-        
-        return base_url
+        """URL de base de datos para conexiones asíncronas (Transaction Mode para serverless)"""
+        # Supabase Transaction Mode - NO soporta prepared statements
+        # Eliminar cualquier parámetro SSL explícito para evitar conflictos
+        base_url = self.DATABASE_URL.split('?')[0]  # Quitar parámetros existentes
+        return base_url + "?pgbouncer=true"
+    
+    @property
+    def database_url_direct(self) -> str:
+        """URL de base de datos para conexiones directas (Session Mode para migraciones)"""
+        # Supabase Session Mode - soporta prepared statements
+        # Eliminar cualquier parámetro SSL explícito para evitar conflictos
+        return self.DIRECT_DATABASE_URL.split('?')[0]  # Limpiar parámetros
     
     class Config:
         env_file = ".env"

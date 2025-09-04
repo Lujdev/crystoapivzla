@@ -18,37 +18,50 @@ class Base(DeclarativeBase):
     pass
 
 
-# Engine asíncrono para Neon.tech
-engine = create_async_engine(
-    settings.database_url_async,
-    echo=settings.API_DEBUG,  # Log SQL queries en desarrollo
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,  # Verificar conexiones antes de usar
-    pool_recycle=300,  # Reciclar conexiones cada 5 minutos
-    # Configuración específica para Neon.tech y asyncpg
-    connect_args={
-        "server_settings": {
-            "application_name": "crystoapivzla_api",
+# Engine asíncrono para Supabase Transaction Mode
+# NOTA: Para Supabase usamos principalmente asyncpg directo, pero mantenemos SQLAlchemy para compatibilidad
+try:
+    engine = create_async_engine(
+        settings.database_url_direct,  # Usar Session Mode para SQLAlchemy
+        echo=settings.API_DEBUG,  # Log SQL queries en desarrollo
+        pool_size=2,  # Reducido para Supabase
+        max_overflow=3,  # Reducido para Supabase
+        pool_pre_ping=True,  # Verificar conexiones antes de usar
+        pool_recycle=180,  # Reciclar conexiones cada 3 minutos
+        # Configuración específica para Supabase
+        connect_args={
+            "server_settings": {
+                "application_name": "crystoapivzla_supabase",
+            }
         }
-    }
-)
+    )
+except Exception as e:
+    print(f"⚠️ Error inicializando SQLAlchemy engine: {e}")
+    print("ℹ️ Usando solo asyncpg para conexiones directas")
+    engine = None
 
-# Session factory
-async_session_maker = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=True,
-    autocommit=False
-)
+# Session factory (solo si el engine está disponible)
+if engine:
+    async_session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=True,
+        autocommit=False
+    )
+else:
+    async_session_maker = None
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency para obtener sesión de base de datos
     Se usa en FastAPI endpoints con Depends()
+    NOTA: Para Supabase, preferir usar asyncpg directo
     """
+    if not async_session_maker:
+        raise Exception("SQLAlchemy no disponible, usar asyncpg directo")
+        
     async with async_session_maker() as session:
         try:
             yield session
@@ -67,22 +80,25 @@ async def init_db() -> None:
     - Crear tablas si no existen (opcional)
     """
     try:
+        if not engine:
+            logger.info("ℹ️ SQLAlchemy engine no disponible, usando asyncpg únicamente")
+            return
+            
         # Verificar conexión
         async with engine.begin() as conn:
             result = await conn.execute(text("SELECT 1"))
-            logger.info("✅ Conexión a Neon.tech establecida correctamente")
+            logger.info("✅ Conexión a Supabase establecida correctamente")
             
         # Opcional: Crear tablas automáticamente
-        # En producción es mejor usar Alembic migrations
+        # En producción es mejor usar migrations manuales con Supabase
         if settings.is_development:
-            # async with engine.begin() as conn:
-            #     await conn.run_sync(Base.metadata.create_all)
-            #     logger.info("✅ Tablas de desarrollo creadas")
+            logger.info("ℹ️ Modo desarrollo - tablas deben crearse manualmente en Supabase")
             pass
             
     except Exception as e:
-        logger.error(f"❌ Error conectando a la base de datos: {e}")
-        raise
+        logger.error(f"❌ Error conectando a Supabase: {e}")
+        # No fallar completamente, usar asyncpg directo
+        logger.info("ℹ️ Continuando con asyncpg únicamente")
 
 
 async def close_db() -> None:

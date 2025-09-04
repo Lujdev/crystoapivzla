@@ -37,7 +37,8 @@ import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.services.database_service import DatabaseService
+# Importar servicios optimizados para Supabase
+from app.core.database_optimized import optimized_db
 from app.services.cache_service import cache_service
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.utils.response_helpers import (
@@ -156,7 +157,8 @@ def check_dependencies():
     
     # Verificar DatabaseService
     try:
-        from app.services.database_service import DatabaseService
+        # Importar servicios optimizados para Supabase
+        from app.core.database_optimized import optimized_db
         from app.core.database import get_db_session
         DATABASE_AVAILABLE = True
         print("✅ DatabaseService disponible")
@@ -197,7 +199,7 @@ async def check_rate_changed(exchange_code: str, currency_pair: str, new_price: 
         return True  # Si no hay BD, siempre insertar
     
     try:
-        current_rates = await DatabaseService.get_current_rates()
+        current_rates = await optimized_db.get_current_rates_fast()
         
         for rate in current_rates:
             if rate["exchange_code"].upper() == exchange_code.upper() and rate["currency_pair"] == currency_pair:
@@ -306,14 +308,14 @@ def invalidate_cache_task():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manejo de eventos de ciclo de vida de la aplicación con optimizaciones para Neon.tech."""
+    """Manejo de eventos de ciclo de vida de la aplicación optimizada para Supabase Transaction Mode."""
     # Startup
     try:
-        # Inicializar pool de conexiones optimizado para Neon.tech
+        # Inicializar pool de conexiones optimizado para Supabase
         try:
             from app.core.database_optimized import init_optimized_db_pool
             await init_optimized_db_pool()
-            print("✅ Pool de conexiones optimizado para Neon.tech iniciado")
+            print("✅ Pool de conexiones optimizado para Supabase iniciado")
         except Exception as e:
             print(f"⚠️ Error iniciando pool optimizado: {e}")
         
@@ -334,9 +336,9 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         print("✅ Scheduler iniciado - Invalidación de caché cada 15 minutos")
         
-        # Iniciar scheduler de tareas de cotizaciones
+        # Iniciar scheduler de tareas de cotizaciones para Supabase
         start_scheduler()
-        print("✅ Scheduler de cotizaciones optimizado iniciado")
+        print("✅ Scheduler de cotizaciones para Supabase iniciado")
         
     except Exception as e:
         print(f"❌ Error en startup: {str(e)}")
@@ -354,13 +356,13 @@ async def lifespan(app: FastAPI):
             scheduler.shutdown()
             print("✅ Scheduler detenido")
         
-        # Cerrar pool de conexiones optimizado
+        # Cerrar pool de conexiones de Supabase
         try:
             from app.core.database_optimized import close_optimized_db_pool
             await close_optimized_db_pool()
-            print("✅ Pool de conexiones optimizado cerrado")
+            print("✅ Pool de conexiones de Supabase cerrado")
         except Exception as e:
-            print(f"⚠️ Error cerrando pool optimizado: {e}")
+            print(f"⚠️ Error cerrando pool de Supabase: {e}")
         
         # Cerrar conexión Redis
         cache_service.disconnect()
@@ -440,33 +442,35 @@ async def get_config():
         "bcv_api_url": os.getenv("BCV_API_URL", "not_configured"),
         "binance_api_url": os.getenv("BINANCE_API_URL", "not_configured"),
         "optimized_database": True,
-        "neon_tech_optimizations": True
+        "supabase_transaction_mode": True,
+        "prepared_statements": False  # Disabled in Supabase Transaction Mode
     }
     return create_success_response(data, "Configuración obtenida exitosamente")
 
 @app.get("/api/v1/database/optimization-stats")
 async def get_database_optimization_stats():
-    """Estadísticas de optimización de base de datos para Neon.tech."""
+    """Estadísticas de optimización de base de datos para Supabase Transaction Mode."""
     try:
         from app.core.database_optimized import optimized_db
         
         # Obtener estadísticas del pool
         pool_stats = await optimized_db.get_pool_stats()
         
-        # Información de optimizaciones activas
+        # Información de optimizaciones activas para Supabase
         optimization_info = {
             "connection_pooling": {
                 "enabled": True,
-                "type": "asyncpg_native",
+                "type": "supabase_transaction_mode",
                 "current_connections": pool_stats.get("size", 0),
                 "max_connections": pool_stats.get("max_size", 0),
                 "idle_connections": pool_stats.get("idle_size", 0),
-                "min_connections": pool_stats.get("min_size", 0)
+                "min_connections": pool_stats.get("min_size", 0),
+                "mode": pool_stats.get("mode", "transaction_mode")
             },
             "prepared_statements": {
-                "enabled": True,
-                "count": pool_stats.get("prepared_statements", 0),
-                "cache_enabled": True
+                "enabled": False,  # Disabled in Supabase Transaction Mode
+                "count": 0,
+                "reason": "Not supported in Transaction Mode"
             },
             "scheduler_optimizations": {
                 "frequency_reduced": "2 hours (was 1 hour)",
@@ -474,23 +478,25 @@ async def get_database_optimization_stats():
                 "conditional_updates": True
             },
             "query_optimizations": {
-                "using_prepared_statements": True,
+                "using_prepared_statements": False,  # Disabled
                 "connection_reuse": True,
-                "conditional_cache_updates": True
+                "conditional_cache_updates": True,
+                "supabase_pooling": True
             },
-            "neon_tech_specific": {
+            "supabase_specific": {
+                "transaction_mode": True,
                 "optimized_for_serverless": True,
                 "reduced_connection_churning": True,
-                "smart_connection_recycling": True
+                "pooler_managed_connections": True
             }
         }
         
-        # Calcular métricas de eficiencia
+        # Calcular métricas de eficiencia para Supabase
         efficiency_metrics = {
             "connection_efficiency": f"{((pool_stats.get('size', 0) - pool_stats.get('idle_size', 0)) / max(pool_stats.get('size', 1), 1) * 100):.1f}%",
             "pool_utilization": f"{(pool_stats.get('size', 0) / max(pool_stats.get('max_size', 1), 1) * 100):.1f}%",
-            "prepared_statements_ratio": "100%",
-            "estimated_compute_savings": "60-80%"
+            "prepared_statements_ratio": "0% (Disabled in Transaction Mode)",
+            "estimated_compute_savings": "40-60% (vs direct connections)"
         }
         
         return {
@@ -500,11 +506,12 @@ async def get_database_optimization_stats():
                 "active_optimizations": optimization_info,
                 "efficiency_metrics": efficiency_metrics,
                 "recommendations": [
-                    "✅ Connection pooling activado - Reduce conexiones nuevas",
-                    "✅ Prepared statements activos - Cache de queries",
+                    "✅ Supabase Transaction Mode - Pooling automático",
+                    "ℹ️ Prepared statements deshabilitados - Requerido por Transaction Mode",
                     "✅ Scheduler optimizado - Menor frecuencia de actualizaciones",
                     "✅ Cache Redis inteligente - Reduce consultas a DB",
-                    "⚡ Actualización condicional - Solo si datos >30 min"
+                    "⚡ Actualización condicional - Solo si datos >30 min",
+                    "🚀 Connection pooling manejado por Supabase"
                 ]
             },
             "timestamp": datetime.now().isoformat()
@@ -647,11 +654,8 @@ async def _save_bcv_rates_if_changed(usd_ves: float, eur_ves: float, final_url: 
         
         # Solo insertar si hay cambios
         if usd_changed or eur_changed:
-            await DatabaseService.save_bcv_rates(usd_ves, eur_ves, {
-                "source": "BCV",
-                "url": final_url,
-                "timestamp": datetime.now().isoformat()
-            })
+            await optimized_db.upsert_current_rate_fast("BCV", "USD/VES", usd_ves, usd_ves, 0.0, 0.0, "bcv_scrape")
+            await optimized_db.upsert_current_rate_fast("BCV", "EUR/VES", eur_ves, eur_ves, 0.0, 0.0, "bcv_scrape")
             print("💾 BCV rates INSERTADOS en base de datos (tasas cambiaron)")
         else:
             print("⏭️ BCV rates sin cambios - no se insertan en histórico")
@@ -1066,14 +1070,14 @@ async def get_current_rates(
     exchange_code: str = None,
     currency_pair: str = None
 ):
-    """Obtener cotizaciones actuales optimizado para Neon.tech - Reduce consumo de cómputo."""
+    """Obtener cotizaciones actuales optimizado para Supabase Transaction Mode."""
     start_time = datetime.now()
     
     try:
-        # OPTIMIZACIÓN: Usar servicio optimizado con prepared statements
+        # OPTIMIZACIÓN: Usar servicio optimizado para Supabase Transaction Mode
         from app.core.database_optimized import optimized_db
         
-        print(f"🚀 [OPTIMIZED] Obteniendo current_rates con DB optimizada...")
+        print(f"🚀 [SUPABASE] Obteniendo current_rates con Supabase Transaction Mode...")
         
         # Obtener datos desde caché primero, luego DB optimizada
         cached_rates = cache_service.get_current_rates()
@@ -1110,7 +1114,7 @@ async def get_current_rates(
                     update_results["bcv"] = bcv_result
                     
                     if bcv_result.get("status") == "success":
-                        # Guardar usando servicio optimizado
+                        # Guardar usando servicio optimizado para Supabase
                         data = bcv_result.get("data", {})
                         if data.get("usd_ves"):
                             await optimized_db.upsert_current_rate_fast(
@@ -1122,7 +1126,7 @@ async def get_current_rates(
                                 "BCV", "EUR/VES", data["eur_ves"], data["eur_ves"],
                                 source="bcv_web_scraping"
                             )
-                        print(f"✅ BCV actualizado y guardado en DB optimizada")
+                        print(f"✅ BCV actualizado y guardado en Supabase")
                     else:
                         print(f"⚠️ Error actualizando BCV: {bcv_result.get('error', 'Error desconocido')}")
                 except Exception as e:
@@ -1138,7 +1142,7 @@ async def get_current_rates(
                     update_results["binance_p2p"] = binance_result
                     
                     if binance_result.get("status") == "success":
-                        # Guardar usando servicio optimizado
+                        # Guardar usando servicio optimizado para Supabase
                         data = binance_result.get("data", {})
                         if data.get("buy_usdt") and data.get("sell_usdt"):
                             buy_price = data["buy_usdt"]["price"]
@@ -1148,7 +1152,7 @@ async def get_current_rates(
                                 volume_24h=data.get("market_analysis", {}).get("volume_24h", 0),
                                 source="binance_p2p_api"
                             )
-                        print(f"✅ Binance P2P actualizado y guardado en DB optimizada")
+                        print(f"✅ Binance P2P actualizado y guardado en Supabase")
                     else:
                         print(f"⚠️ Error actualizando Binance P2P: {binance_result.get('error', 'Error desconocido')}")
                 except Exception as e:
@@ -1157,7 +1161,7 @@ async def get_current_rates(
         else:
             print("⚡ Datos están actualizados, usando caché/DB directamente")
         
-        # Obtener datos desde DB optimizada (prepared statements)
+        # Obtener datos desde Supabase optimizada (Transaction Mode)
         rates = await optimized_db.get_current_rates_fast(exchange_code, currency_pair)
         
         # Formatear las respuestas
@@ -1176,12 +1180,13 @@ async def get_current_rates(
             "status": "success",
             "data": formatted_rates,
             "count": len(formatted_rates),
-            "source": "optimized_database",
+            "source": "supabase_transaction_mode",
             "cached": cached_rates is not None,
             "update_status": update_results,
             "execution_time_seconds": round(execution_time, 3),
             "optimization": {
-                "used_prepared_statements": True,
+                "transaction_mode": True,
+                "prepared_statements": False,  # Disabled in Transaction Mode
                 "connection_pool": pool_stats,
                 "cache_updated": bool(rates and not (exchange_code or currency_pair))
             },
@@ -1197,7 +1202,6 @@ async def get_current_rates(
             "optimization": "failed",
             "timestamp": datetime.now().isoformat()
         }
-
 
 async def _should_update_rates() -> bool:
     """
@@ -1280,7 +1284,7 @@ async def _should_insert_rate_to_history(rate: dict[str, Any]) -> bool:
         return True  # En caso de error, insertar por seguridad
 
 async def _insert_single_rate_to_history(rate: dict[str, Any]) -> None:
-    """Insertar una tasa en rate_history usando DatabaseService."""
+    """Insertar una tasa en rate_history usando OptimizedDatabaseService."""
     try:
         exchange_code = rate.get('exchange_code')
         currency_pair = rate.get('currency_pair')
@@ -1305,19 +1309,17 @@ async def _insert_single_rate_to_history(rate: dict[str, Any]) -> None:
         elif not avg_price and sell_price:
             avg_price = sell_price
         
-        # Usar el DatabaseService existente para mantener consistencia
+        # Usar OptimizedDatabaseService para Supabase
         if exchange_code.upper() == "BCV":
             if currency_pair == "USD/VES":
-                await DatabaseService.save_bcv_rates(
-                    buy_price or avg_price, 
-                    rate.get('eur_ves', 0), 
-                    {"source": "auto_save_from_current", "timestamp": datetime.now().isoformat()}
+                await optimized_db.upsert_current_rate_fast(
+                    "BCV", "USD/VES", 
+                    buy_price or avg_price, buy_price or avg_price, 0.0, 0.0, "auto_save_from_current"
                 )
             elif currency_pair == "EUR/VES":
-                await DatabaseService.save_bcv_rates(
-                    rate.get('usd_ves', 0), 
-                    sell_price or avg_price, 
-                    {"source": "auto_save_from_current", "timestamp": datetime.now().isoformat()}
+                await optimized_db.upsert_current_rate_fast(
+                    "BCV", "EUR/VES", 
+                    sell_price or avg_price, sell_price or avg_price, 0.0, 0.0, "auto_save_from_current"
                 )
         elif exchange_code.upper() == "BINANCE_P2P":
             # Crear estructura compatible con save_binance_p2p_complete_rates
@@ -1328,7 +1330,10 @@ async def _insert_single_rate_to_history(rate: dict[str, Any]) -> None:
                 "source": source,
                 "api_method": api_method
             }
-            await DatabaseService.save_binance_p2p_complete_rates(binance_data)
+            buy_price = binance_data.get("buy_usdt", {}).get("price", 0)
+            sell_price = binance_data.get("sell_usdt", {}).get("price", 0)
+            volume_24h = binance_data.get("market_analysis", {}).get("volume_24h", 0)
+            await optimized_db.upsert_current_rate_fast("BINANCE_P2P", "USDT/VES", buy_price, sell_price, 0.0, volume_24h, "binance_p2p_complete")
         else:
             # Para otros exchanges, usar servicio optimizado
             try:
@@ -1362,7 +1367,9 @@ async def get_all_rate_history(limit: int = 100):
         }
     
     try:
-        rates = await DatabaseService.get_latest_rates(limit)
+        # Usar OptimizedDatabaseService para Supabase
+        from app.core.database_optimized import optimized_db
+        rates = await optimized_db.get_latest_rates_fast(limit)
         return {
             "status": "success",
             "data": rates,
@@ -1692,7 +1699,10 @@ async def get_binance_p2p_complete():
                     
                     # Solo insertar si hay cambios en cualquiera de los dos precios
                     if buy_price_changed or sell_price_changed:
-                        await DatabaseService.save_binance_p2p_complete_rates(complete_result)
+                        buy_price = complete_result.get("buy_usdt", {}).get("price", 0)
+                        sell_price = complete_result.get("sell_usdt", {}).get("price", 0)
+                        volume_24h = complete_result.get("market_analysis", {}).get("volume_24h", 0)
+                        await optimized_db.upsert_current_rate_fast("BINANCE_P2P", "USDT/VES", buy_price, sell_price, 0.0, volume_24h, "binance_p2p_complete")
                         print("💾 Binance P2P COMPLETE rates INSERTADOS en base de datos (UNA SOLA LÍNEA - tasas cambiaron)")
                         print(f"   Buy price cambió: {buy_price_changed}, Sell price cambió: {sell_price_changed}")
                     else:

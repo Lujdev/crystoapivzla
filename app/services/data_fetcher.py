@@ -14,7 +14,7 @@ from pprint import pprint
 
 from app.core.config import settings
 from app.core.database import get_db_session, execute_raw_sql
-from app.services.database_service import DatabaseService
+from app.core.database_optimized import optimized_db
 
 
 async def update_all_rates() -> Dict[str, any]:
@@ -206,7 +206,7 @@ async def scrape_bcv_rates() -> Dict[str, any]:
         
         # Guardar en base de datos
         try:
-            await DatabaseService.save_bcv_rates(usd_rate, eur_rate, result)
+            await optimized_db.upsert_current_rate_fast(usd_rate, eur_rate, result)
             logger.info("💾 BCV rates guardados en base de datos")
         except Exception as e:
             logger.warning(f"⚠️ No se pudieron guardar BCV rates en BD: {e}")
@@ -648,7 +648,7 @@ async def fetch_binance_p2p_sell_rates() -> Dict[str, any]:
                 
                 # Guardar en base de datos
                 try:
-                    await DatabaseService.save_binance_p2p_rates(result)
+                    await optimized_db.upsert_current_rate_fast(result)
                     logger.info("💾 Binance P2P sell rates guardados en base de datos")
                 except Exception as e:
                     logger.warning(f"⚠️ No se pudieron guardar Binance P2P sell rates en BD: {e}")
@@ -909,7 +909,7 @@ async def fetch_binance_p2p_rates() -> Dict[str, any]:
                 
                 # Guardar en base de datos
                 try:
-                    await DatabaseService.save_binance_p2p_rates(result)
+                    await optimized_db.upsert_current_rate_fast(result)
                     logger.info("💾 Binance P2P rates guardados en base de datos")
                 except Exception as e:
                     logger.warning(f"⚠️ No se pudieron guardar Binance P2P rates en BD: {e}")
@@ -987,7 +987,7 @@ async def fetch_binance_p2p_complete() -> Dict[str, any]:
             # IMPORTANTE: Solo guardar UNA vez usando el método específico para datos completos
             # NO guardar usando las funciones individuales para evitar duplicados
             try:
-                await DatabaseService.save_binance_p2p_complete_rates(complete_result)
+                await optimized_db.upsert_current_rate_fast(complete_result)
                 logger.info("💾 Binance P2P COMPLETE rates guardados en base de datos (UNA SOLA LÍNEA)")
             except Exception as e:
                 logger.warning(f"⚠️ No se pudieron guardar Binance P2P COMPLETE rates en BD: {e}")

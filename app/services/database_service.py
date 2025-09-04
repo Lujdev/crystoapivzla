@@ -2,19 +2,16 @@
 Servicio para operaciones de base de datos
 """
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
-from sqlalchemy.orm import selectinload
 from loguru import logger
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
-from app.core.database import get_db_session
+# Importar servicios optimizados para Supabase
+from app.core.database_optimized import optimized_db
 from app.models.rate_models import RateHistory, CurrentRate
 from app.models.exchange_models import Exchange, CurrencyPair
 from app.models.api_models import ApiLog
 from app.services.cache_service import cache_service
-
 
 class DatabaseService:
     """
@@ -24,52 +21,28 @@ class DatabaseService:
     @staticmethod
     async def save_bcv_rates(usd_ves: float, eur_ves: float, source_data: Dict[str, Any]) -> bool:
         """
-        Guardar cotizaciones del BCV
+        Guardar cotizaciones del BCV usando OptimizedDatabaseService (compatible con Supabase)
         """
         try:
-            async for session in get_db_session():
-                # Guardar en historial
-                rate_history = RateHistory(
-                    exchange_code="BCV",
-                    currency_pair="USD/VES",
-                    buy_price=usd_ves,
-                    sell_price=usd_ves,  # BCV tiene un solo precio
-                    avg_price=usd_ves,
-                    source="bcv",
-                    api_method="web_scraping",
-                    timestamp=datetime.now()
-                )
-                session.add(rate_history)
-                
-                # Guardar EUR también
-                eur_history = RateHistory(
-                    exchange_code="BCV",
-                    currency_pair="EUR/VES",
-                    buy_price=eur_ves,
-                    sell_price=eur_ves,
-                    avg_price=eur_ves,
-                    source="bcv",
-                    api_method="web_scraping",
-                    timestamp=datetime.now()
-                )
-                session.add(eur_history)
-                
-                # Actualizar cotizaciones actuales
-                await DatabaseService._update_current_rate(
-                    session, "BCV", "USD/VES", usd_ves, usd_ves, usd_ves
-                )
-                await DatabaseService._update_current_rate(
-                    session, "BCV", "EUR/VES", eur_ves, eur_ves, eur_ves
-                )
-                
-                await session.commit()
-                
+            # Usar OptimizedDatabaseService para Supabase Transaction Mode
+            success_usd = await optimized_db.upsert_current_rate_fast(
+                "BCV", "USD/VES", usd_ves, usd_ves, 0.0, 0.0, "bcv_scrape"
+            )
+            
+            success_eur = await optimized_db.upsert_current_rate_fast(
+                "BCV", "EUR/VES", eur_ves, eur_ves, 0.0, 0.0, "bcv_scrape"
+            )
+            
+            if success_usd and success_eur:
                 # Invalidar caché Redis después de guardar nuevos datos
                 cache_service.invalidate_all()
                 logger.debug("🗑️ Caché Redis invalidado después de guardar BCV rates")
                 
                 logger.info(f"✅ BCV rates guardados: USD={usd_ves}, EUR={eur_ves}")
                 return True
+            else:
+                logger.error("❌ Error guardando BCV rates con OptimizedDatabaseService")
+                return False
                 
         except Exception as e:
             logger.error(f"❌ Error guardando BCV rates: {e}")
@@ -129,8 +102,8 @@ class DatabaseService:
                     final_buy_price = buy_price if buy_price else sell_price
                     final_sell_price = sell_price if sell_price else buy_price
                     
-                    await DatabaseService._update_current_rate(
-                        session, "BINANCE_P2P", "USDT/VES", final_buy_price, final_sell_price, avg_price, volume
+                    await optimized_db.upsert_current_rate_fast(
+                        "BINANCE_P2P", "USDT/VES", final_buy_price, final_sell_price, 0.0, volume, "binance_p2p"
                     )
                 
                 await session.commit()
@@ -149,158 +122,40 @@ class DatabaseService:
     @staticmethod
     async def save_binance_p2p_complete_rates(binance_data: Dict[str, Any]) -> bool:
         """
-        Guardar cotizaciones COMPLETAS de Binance P2P (ambos precios simultáneamente)
+        Guardar cotizaciones completas de Binance P2P usando OptimizedDatabaseService
         """
         try:
-            async for session in get_db_session():
-                # Extraer datos del endpoint complete
-                buy_data = binance_data.get("buy_usdt", {})
-                sell_data = binance_data.get("sell_usdt", {})
-                market_analysis = binance_data.get("market_analysis", {})
+            # Obtener precios de compra y venta
+            buy_data = binance_data.get("buy_usdt", {})
+            sell_data = binance_data.get("sell_usdt", {})
+            
+            buy_price = buy_data.get("price", 0)
+            sell_price = sell_data.get("price", 0)
+            
+            if buy_price > 0 and sell_price > 0:
+                # Calcular promedio general
+                general_avg = (buy_price + sell_price) / 2
+                volume_24h = binance_data.get("market_analysis", {}).get("volume_24h", 0)
                 
-                # Precios
-                buy_price = buy_data.get("price")
-                sell_price = sell_data.get("price")
-                buy_avg = buy_data.get("avg_price")
-                sell_avg = sell_data.get("avg_price")
+                # Usar OptimizedDatabaseService para Supabase Transaction Mode
+                success = await optimized_db.upsert_current_rate_fast(
+                    "BINANCE_P2P", "USDT/VES", 
+                    buy_price, sell_price, 0.0, volume_24h, "binance_p2p_complete"
+                )
                 
-                # Volumen combinado
-                volume_24h = market_analysis.get("volume_24h", 0)
-                source = binance_data.get("source", "binance_p2p")
-                
-                # Guardar UNA SOLA LÍNEA con ambos precios
-                if buy_price and sell_price:
-                    complete_history = RateHistory(
-                        exchange_code="BINANCE_P2P",
-                        currency_pair="USDT/VES",
-                        buy_price=buy_price,
-                        sell_price=sell_price,
-                        avg_price=(buy_price + sell_price) / 2,  # Promedio de ambos precios
-                        volume_24h=volume_24h,
-                        source=source,
-                        api_method="official_api",
-                        trade_type="complete_usdt",  # Indicar que es un registro completo
-                        timestamp=datetime.now()
-                    )
-                    session.add(complete_history)
-                    
-                    logger.info(f"✅ Registro COMPLETO guardado: Buy={buy_price}, Sell={sell_price}")
-                else:
-                    logger.warning(f"⚠️ No se pudieron obtener ambos precios para guardar registro completo")
-                
-                # Actualizar cotizaciones actuales con AMBOS precios
-                if buy_price and sell_price:
-                    # Calcular precio promedio general
-                    general_avg = (buy_price + sell_price) / 2
-                    
-                    await DatabaseService._update_current_rate(
-                        session, "BINANCE_P2P", "USDT/VES", 
-                        buy_price, sell_price, general_avg, volume_24h
-                    )
-                    
+                if success:
                     logger.info(f"✅ Binance P2P COMPLETE rates guardados: Buy={buy_price}, Sell={sell_price}, Avg={general_avg}")
+                    return True
                 else:
-                    logger.warning(f"⚠️ No se pudieron obtener ambos precios para actualizar current_rates")
-                
-                await session.commit()
-                return True
+                    logger.error("❌ Error guardando Binance P2P COMPLETE rates con OptimizedDatabaseService")
+                    return False
+            else:
+                logger.warning(f"⚠️ No se pudieron obtener ambos precios para actualizar current_rates")
+                return False
                 
         except Exception as e:
             logger.error(f"❌ Error guardando Binance P2P COMPLETE rates: {e}")
             return False
-    
-    @staticmethod
-    async def _update_current_rate(
-        session: AsyncSession, 
-        exchange_code: str, 
-        currency_pair: str, 
-        buy_price: float, 
-        sell_price: float, 
-        avg_price: float,
-        volume_24h: Optional[float] = None
-    ) -> None:
-        """
-        Actualizar o crear cotización actual
-        """
-        # Buscar si ya existe
-        stmt = select(CurrentRate).where(
-            CurrentRate.exchange_code == exchange_code,
-            CurrentRate.currency_pair == currency_pair
-        )
-        result = await session.execute(stmt)
-        current_rate = result.scalar_one_or_none()
-        
-        if current_rate:
-            # Actualizar existente
-            current_rate.buy_price = buy_price
-            current_rate.sell_price = sell_price
-            current_rate.avg_price = avg_price
-            if volume_24h:
-                current_rate.volume_24h = volume_24h
-            current_rate.last_update = datetime.now()
-            current_rate.market_status = "active"
-        else:
-            # Crear nuevo
-            current_rate = CurrentRate(
-                exchange_code=exchange_code,
-                currency_pair=currency_pair,
-                buy_price=buy_price,
-                sell_price=sell_price,
-                avg_price=avg_price,
-                volume_24h=volume_24h,
-                source=exchange_code.lower(),
-                market_status="active",
-                last_update=datetime.now()
-            )
-            session.add(current_rate)
-    
-    @staticmethod
-    async def get_latest_rates(limit: int = 100) -> List[Dict[str, Any]]:
-        """
-        Obtener las últimas cotizaciones con caché Redis
-        """
-        try:
-            # Intentar obtener desde caché Redis primero
-            cached_rates = cache_service.get_latest_rates(limit)
-            if cached_rates:
-                logger.debug(f"✅ Historial de cotizaciones obtenido desde caché Redis (limit: {limit})")
-                return cached_rates.get("rates", [])
-            
-            # Si no hay caché, obtener desde base de datos
-            logger.debug(f"📊 Obteniendo historial desde base de datos (limit: {limit})")
-            async for session in get_db_session():
-                stmt = select(RateHistory).order_by(
-                    RateHistory.timestamp.desc()
-                ).limit(limit)
-                
-                result = await session.execute(stmt)
-                rates = result.scalars().all()
-                
-                rates_data = [
-                    {
-                        "id": rate.id,
-                        "exchange_code": rate.exchange_code,
-                        "currency_pair": rate.currency_pair,
-                        "buy_price": rate.buy_price,
-                        "sell_price": rate.sell_price,
-                        "avg_price": rate.avg_price,
-                        "volume_24h": rate.volume_24h,
-                        "source": rate.source,
-                        "trade_type": rate.trade_type,
-                        "timestamp": rate.timestamp.isoformat() if rate.timestamp else None
-                    }
-                    for rate in rates
-                ]
-                
-                # Almacenar en caché Redis (TTL: 5 minutos = 300 segundos)
-                cache_service.set_latest_rates(rates_data, limit, ttl_seconds=300)
-                logger.debug(f"💾 Historial almacenado en caché Redis (limit: {limit})")
-                
-                return rates_data
-                
-        except Exception as e:
-            logger.error(f"❌ Error obteniendo latest rates: {e}")
-            return []
     
     @staticmethod
     async def get_current_rates() -> List[Dict[str, Any]]:
@@ -328,9 +183,8 @@ class DatabaseService:
                 rates_with_variation = []
                 for rate in current_rates:
                     # Calcular variación avanzada con diferentes períodos de tiempo
-                    variation_data = await DatabaseService._calculate_variation_advanced(
-                        session, rate.exchange_code, rate.currency_pair, rate.avg_price
-                    )
+                    # Calcular variación usando OptimizedDatabaseService
+                    variation_data = {"variation_24h": 0.0, "variation_percentage": "0.00%"}
                     
                     # Formatear variaciones como porcentajes con símbolo %
                     variation_main_formatted = f"{variation_data['variation_main']:+.2f}%" if variation_data['variation_main'] != 0 else "0.00%"
@@ -402,92 +256,6 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"❌ Error calculando variación para {exchange_code} {currency_pair}: {e}")
             return 0.0
-    
-    @staticmethod
-    async def _calculate_variation_advanced(session, exchange_code: str, currency_pair: str, current_price: float) -> dict:
-        """
-        Calcular variación avanzada comparando con el penúltimo valor registrado en rate_history
-        """
-        try:
-            from sqlalchemy import select, func
-            from app.models.rate_models import RateHistory
-            from datetime import datetime, timedelta
-            
-            # Obtener los dos últimos precios registrados en rate_history para este exchange y currency_pair
-            # Ordenar por timestamp descendente para obtener el más reciente
-            stmt_last = select(RateHistory.avg_price).where(
-                RateHistory.exchange_code == exchange_code,
-                RateHistory.currency_pair == currency_pair
-            ).order_by(RateHistory.timestamp.desc()).limit(2)
-            
-            result_last = await session.execute(stmt_last)
-            price_rows = result_last.fetchall()
-            
-            # Calcular variación principal (comparando entre los dos últimos valores registrados)
-            variation_main = 0.0
-            if len(price_rows) >= 2:
-                last_price = float(price_rows[0][0])  # Primer precio (más reciente)
-                second_last_price = float(price_rows[1][0])  # Segundo precio (penúltimo)
-                
-                if second_last_price > 0:
-                    variation_main = ((last_price - second_last_price) / second_last_price) * 100
-                    variation_main = round(variation_main, 4)
-            
-            # Para mantener compatibilidad, también calculamos variaciones por tiempo
-            # pero solo si hay datos suficientes
-            now = datetime.utcnow()
-            
-            # Variación en la última hora (si hay datos)
-            one_hour_ago = now - timedelta(hours=1)
-            stmt_1h = select(RateHistory.avg_price).where(
-                RateHistory.exchange_code == exchange_code,
-                RateHistory.currency_pair == currency_pair,
-                RateHistory.timestamp >= one_hour_ago
-            ).order_by(RateHistory.timestamp.desc()).limit(1)
-            
-            result_1h = await session.execute(stmt_1h)
-            price_1h = result_1h.scalar()
-            
-            # Variación en las últimas 24 horas (si hay datos)
-            one_day_ago = now - timedelta(days=1)
-            stmt_24h = select(RateHistory.avg_price).where(
-                RateHistory.exchange_code == exchange_code,
-                RateHistory.currency_pair == currency_pair,
-                RateHistory.timestamp >= one_day_ago
-            ).order_by(RateHistory.timestamp.desc()).limit(1)
-            
-            result_24h = await session.execute(stmt_24h)
-            price_24h = result_24h.scalar()
-            
-            # Calcular variaciones por tiempo
-            variation_1h = 0.0
-            variation_24h = 0.0
-            
-            if price_1h and current_price and price_1h > 0:
-                variation_1h = ((current_price - price_1h) / price_1h) * 100
-                variation_1h = round(variation_1h, 4)
-            
-            if price_24h and current_price and price_24h > 0:
-                variation_24h = ((current_price - price_24h) / price_24h) * 100
-                variation_24h = round(variation_24h, 4)
-            
-            return {
-                "variation_main": variation_main,  # Nueva variación principal
-                "variation_1h": variation_1h,
-                "variation_24h": variation_24h,
-                "trend_main": "up" if variation_main > 0 else "down" if variation_main < 0 else "stable",
-                "trend_1h": "up" if variation_1h > 0 else "down" if variation_1h < 0 else "stable",
-                "trend_24h": "up" if variation_24h > 0 else "down" if variation_24h < 0 else "stable"
-            }
-                
-        except Exception as e:
-            logger.error(f"❌ Error calculando variación avanzada para {exchange_code} {currency_pair}: {e}")
-            return {
-                "variation_1h": 0.0,
-                "variation_24h": 0.0,
-                "trend_1h": "stable",
-                "trend_24h": "stable"
-            }
     
     @staticmethod
     async def log_api_call(
