@@ -15,12 +15,24 @@ class Settings(BaseSettings):
     Compatible con Neon.tech y despliegue en producción
     """
     
-    # Database (Supabase)
-    DATABASE_URL: str = "postgresql://postgres.vgrnjwzbmpmqekaylbdq:EP50wb7WXmucInTH@aws-1-us-east-2.pooler.supabase.com:6543/postgres"
-    SUPABASE_URL: Optional[str] = None
-    SUPABASE_ANON_KEY: Optional[str] = None
+    # Database (Supabase) - CREDENCIALES EN .env
+    DATABASE_URL: str = Field(
+        default="",
+        description="URL de conexión a Supabase (Transaction Mode - puerto 6543)"
+    )
+    SUPABASE_URL: Optional[str] = Field(
+        default=None,
+        description="URL de Supabase para API"
+    )
+    SUPABASE_ANON_KEY: Optional[str] = Field(
+        default=None,
+        description="Clave anónima de Supabase"
+    )
     # Connection for migrations (Session mode)
-    DIRECT_DATABASE_URL: str = "postgresql://postgres.vgrnjwzbmpmqekaylbdq:EP50wb7WXmucInTH@aws-1-us-east-2.pooler.supabase.com:5432/postgres"
+    DIRECT_DATABASE_URL: str = Field(
+        default="",
+        description="URL de conexión directa a Supabase (Session Mode - puerto 5432)"
+    )
     
     # API Configuration
     API_HOST: str = "0.0.0.0"
@@ -30,7 +42,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     
     # Security
-    SECRET_KEY: str = "change-this-super-secret-key-in-production"
+    SECRET_KEY: str = Field(
+        default="",
+        description="Clave secreta para JWT (OBLIGATORIO en producción)"
+    )
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     
