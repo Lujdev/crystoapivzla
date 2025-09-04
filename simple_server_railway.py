@@ -199,7 +199,7 @@ async def check_rate_changed(exchange_code: str, currency_pair: str, new_price: 
         return True  # Si no hay BD, siempre insertar
     
     try:
-        current_rates = await DatabaseService.get_current_rates()
+        current_rates = await optimized_db.get_current_rates_fast()
         
         for rate in current_rates:
             if rate["exchange_code"].upper() == exchange_code.upper() and rate["currency_pair"] == currency_pair:
@@ -654,11 +654,8 @@ async def _save_bcv_rates_if_changed(usd_ves: float, eur_ves: float, final_url: 
         
         # Solo insertar si hay cambios
         if usd_changed or eur_changed:
-            await DatabaseService.save_bcv_rates(usd_ves, eur_ves, {
-                "source": "BCV",
-                "url": final_url,
-                "timestamp": datetime.now().isoformat()
-            })
+            await optimized_db.upsert_current_rate_fast("BCV", "USD/VES", usd_ves, usd_ves, 0.0, 0.0, "bcv_scrape")
+            await optimized_db.upsert_current_rate_fast("BCV", "EUR/VES", eur_ves, eur_ves, 0.0, 0.0, "bcv_scrape")
             print("💾 BCV rates INSERTADOS en base de datos (tasas cambiaron)")
         else:
             print("⏭️ BCV rates sin cambios - no se insertan en histórico")
@@ -1206,7 +1203,6 @@ async def get_current_rates(
             "timestamp": datetime.now().isoformat()
         }
 
-
 async def _should_update_rates() -> bool:
     """
     Verificar si las tasas necesitan actualización (>30 minutos de antigüedad)
@@ -1288,7 +1284,7 @@ async def _should_insert_rate_to_history(rate: dict[str, Any]) -> bool:
         return True  # En caso de error, insertar por seguridad
 
 async def _insert_single_rate_to_history(rate: dict[str, Any]) -> None:
-    """Insertar una tasa en rate_history usando DatabaseService."""
+    """Insertar una tasa en rate_history usando OptimizedDatabaseService."""
     try:
         exchange_code = rate.get('exchange_code')
         currency_pair = rate.get('currency_pair')
@@ -1313,19 +1309,17 @@ async def _insert_single_rate_to_history(rate: dict[str, Any]) -> None:
         elif not avg_price and sell_price:
             avg_price = sell_price
         
-        # Usar el DatabaseService existente para mantener consistencia
+        # Usar OptimizedDatabaseService para Supabase
         if exchange_code.upper() == "BCV":
             if currency_pair == "USD/VES":
-                await DatabaseService.save_bcv_rates(
-                    buy_price or avg_price, 
-                    rate.get('eur_ves', 0), 
-                    {"source": "auto_save_from_current", "timestamp": datetime.now().isoformat()}
+                await optimized_db.upsert_current_rate_fast(
+                    "BCV", "USD/VES", 
+                    buy_price or avg_price, buy_price or avg_price, 0.0, 0.0, "auto_save_from_current"
                 )
             elif currency_pair == "EUR/VES":
-                await DatabaseService.save_bcv_rates(
-                    rate.get('usd_ves', 0), 
-                    sell_price or avg_price, 
-                    {"source": "auto_save_from_current", "timestamp": datetime.now().isoformat()}
+                await optimized_db.upsert_current_rate_fast(
+                    "BCV", "EUR/VES", 
+                    sell_price or avg_price, sell_price or avg_price, 0.0, 0.0, "auto_save_from_current"
                 )
         elif exchange_code.upper() == "BINANCE_P2P":
             # Crear estructura compatible con save_binance_p2p_complete_rates
@@ -1336,7 +1330,10 @@ async def _insert_single_rate_to_history(rate: dict[str, Any]) -> None:
                 "source": source,
                 "api_method": api_method
             }
-            await DatabaseService.save_binance_p2p_complete_rates(binance_data)
+            buy_price = binance_data.get("buy_usdt", {}).get("price", 0)
+            sell_price = binance_data.get("sell_usdt", {}).get("price", 0)
+            volume_24h = binance_data.get("market_analysis", {}).get("volume_24h", 0)
+            await optimized_db.upsert_current_rate_fast("BINANCE_P2P", "USDT/VES", buy_price, sell_price, 0.0, volume_24h, "binance_p2p_complete")
         else:
             # Para otros exchanges, usar servicio optimizado
             try:
@@ -1370,7 +1367,9 @@ async def get_all_rate_history(limit: int = 100):
         }
     
     try:
-        rates = await DatabaseService.get_latest_rates(limit)
+        # Usar OptimizedDatabaseService para Supabase
+        from app.core.database_optimized import optimized_db
+        rates = await optimized_db.get_latest_rates_fast(limit)
         return {
             "status": "success",
             "data": rates,
@@ -1700,7 +1699,10 @@ async def get_binance_p2p_complete():
                     
                     # Solo insertar si hay cambios en cualquiera de los dos precios
                     if buy_price_changed or sell_price_changed:
-                        await DatabaseService.save_binance_p2p_complete_rates(complete_result)
+                        buy_price = complete_result.get("buy_usdt", {}).get("price", 0)
+                        sell_price = complete_result.get("sell_usdt", {}).get("price", 0)
+                        volume_24h = complete_result.get("market_analysis", {}).get("volume_24h", 0)
+                        await optimized_db.upsert_current_rate_fast("BINANCE_P2P", "USDT/VES", buy_price, sell_price, 0.0, volume_24h, "binance_p2p_complete")
                         print("💾 Binance P2P COMPLETE rates INSERTADOS en base de datos (UNA SOLA LÍNEA - tasas cambiaron)")
                         print(f"   Buy price cambió: {buy_price_changed}, Sell price cambió: {sell_price_changed}")
                     else:
