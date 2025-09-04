@@ -52,3 +52,7 @@ Thumbs.db          # Windows
 # Archivos específicos de FastAPI/Uvicorn (si se generan)
 *.sqlite3          # Si usas SQLite
 .env
+# Environment variables
+.env
+.env.local
+.env.production
