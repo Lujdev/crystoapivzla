@@ -24,16 +24,33 @@ async def update_all_rates() -> Dict[str, any]:
     results = {
         "bcv": {"status": "pending", "data": None, "error": None},
         "binance_p2p": {"status": "pending", "data": None, "error": None},
+        "italcambios": {"status": "pending", "data": None, "error": None},
         "timestamp": datetime.now().isoformat()
     }
     
     try:
-        # TODO: Implementar fetching real de datos
         logger.info("🔄 Actualizando todas las cotizaciones...")
         
-        # Placeholder por ahora
-        results["bcv"]["status"] = "success"
-        results["binance_p2p"]["status"] = "success"
+        # Actualizar BCV
+        try:
+            bcv_result = await update_bcv_rates()
+            results["bcv"] = bcv_result
+        except Exception as e:
+            results["bcv"] = {"status": "error", "error": str(e)}
+        
+        # Actualizar Binance P2P
+        try:
+            binance_result = await update_binance_p2p_rates()
+            results["binance_p2p"] = binance_result
+        except Exception as e:
+            results["binance_p2p"] = {"status": "error", "error": str(e)}
+        
+        # Actualizar Italcambios
+        try:
+            italcambios_result = await update_italcambios_rates()
+            results["italcambios"] = italcambios_result
+        except Exception as e:
+            results["italcambios"] = {"status": "error", "error": str(e)}
         
         logger.info("✅ Todas las cotizaciones actualizadas")
         return results
@@ -206,7 +223,7 @@ async def scrape_bcv_rates() -> Dict[str, any]:
         
         # Guardar en base de datos
         try:
-            await optimized_db.upsert_current_rate_fast(usd_rate, eur_rate, result)
+            await optimized_db.upsert_current_rate_fast(data=result)
             logger.info("💾 BCV rates guardados en base de datos")
         except Exception as e:
             logger.warning(f"⚠️ No se pudieron guardar BCV rates en BD: {e}")
@@ -648,7 +665,7 @@ async def fetch_binance_p2p_sell_rates() -> Dict[str, any]:
                 
                 # Guardar en base de datos
                 try:
-                    await optimized_db.upsert_current_rate_fast(result)
+                    await optimized_db.upsert_current_rate_fast(data=result)
                     logger.info("💾 Binance P2P sell rates guardados en base de datos")
                 except Exception as e:
                     logger.warning(f"⚠️ No se pudieron guardar Binance P2P sell rates en BD: {e}")
@@ -909,7 +926,7 @@ async def fetch_binance_p2p_rates() -> Dict[str, any]:
                 
                 # Guardar en base de datos
                 try:
-                    await optimized_db.upsert_current_rate_fast(result)
+                    await optimized_db.upsert_current_rate_fast(data=result)
                     logger.info("💾 Binance P2P rates guardados en base de datos")
                 except Exception as e:
                     logger.warning(f"⚠️ No se pudieron guardar Binance P2P rates en BD: {e}")
@@ -987,7 +1004,7 @@ async def fetch_binance_p2p_complete() -> Dict[str, any]:
             # IMPORTANTE: Solo guardar UNA vez usando el método específico para datos completos
             # NO guardar usando las funciones individuales para evitar duplicados
             try:
-                await optimized_db.upsert_current_rate_fast(complete_result)
+                await optimized_db.upsert_current_rate_fast(data=complete_result)
                 logger.info("💾 Binance P2P COMPLETE rates guardados en base de datos (UNA SOLA LÍNEA)")
             except Exception as e:
                 logger.warning(f"⚠️ No se pudieron guardar Binance P2P COMPLETE rates en BD: {e}")
@@ -1014,12 +1031,14 @@ async def update_binance_p2p_rates() -> Dict[str, any]:
     try:
         logger.info("🟡 Obteniendo cotizaciones de Binance P2P...")
         
-        # Usar la función de API real de Binance P2P
-        result = await fetch_binance_p2p_rates()
+        # Usar la función completa de Binance P2P que obtiene tanto compra como venta
+        result = await fetch_binance_p2p_complete()
         
         if result["status"] == "success":
             data = result["data"]
-            logger.info(f"✅ Binance P2P obtenido: USDT/VES = {data['usdt_ves_buy']} (mejor precio)")
+            buy_price = data['buy_usdt']['price']
+            sell_price = data['sell_usdt']['price']
+            logger.info(f"✅ Binance P2P obtenido: Buy={buy_price}, Sell={sell_price}")
         else:
             logger.error(f"❌ Error obteniendo datos de Binance P2P: {result['error']}")
         
@@ -1093,3 +1112,176 @@ def validate_rate_value(rate: float) -> bool:
 # - parse_binance_json()
 # - calculate_spreads()
 # - update_rate_history()
+
+
+async def scrape_italcambios_rates() -> Dict[str, any]:
+    """
+    Hacer web scraping de la página de Italcambios para obtener cotizaciones USD/VES
+    Siguiendo la estructura HTML específica:
+    1. div con clases: container-fluid compra
+    2. div con clase: slide-track
+    3. div con clase: row mb-15
+    4. div con clase: col-8 pl-0 y dentro de ese div esta encerrado: <p class="small">USD</p>
+    5. Una vez consigas el <p> que diga USD. Regresas al <div> numero 2 con clase slide-track que dentro tiene una etiqueta <p> con clase small donde dice Compra y Venta.
+    """
+    try:
+        logger.info("🏦 Iniciando scraping de Italcambios...")
+        
+        # URL de Italcambios
+        url = "https://www.italcambio.com"
+        
+        # Headers para simular un navegador real
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        # Configuración del cliente HTTP
+        connector = aiohttp.TCPConnector(ssl=False)  # Deshabilitar verificación SSL
+        
+        async with aiohttp.ClientSession(
+            headers=headers, 
+            timeout=aiohttp.ClientTimeout(total=30),
+            connector=connector
+        ) as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(f"❌ Error HTTP {response.status}: {error_text}")
+                    raise Exception(f"Error HTTP {response.status}: {response.reason}")
+                
+                html_content = await response.text()
+                logger.info(f"✅ Conexión exitosa a Italcambios")
+        
+        # Parsear el HTML con BeautifulSoup
+        soup = BeautifulSoup(html_content, 'lxml')
+        
+        # Paso 1: Buscar div con clases "container-fluid compra"
+        container_fluid = soup.find('div', class_='container-fluid compra')
+        if not container_fluid:
+            raise Exception("No se encontró el div con clase 'container-fluid compra'")
+        
+        logger.info("✅ Paso 1: Encontrado div container-fluid compra")
+        
+        # Paso 2: Buscar div con clase "slide-track" dentro del container-fluid
+        slide_track = container_fluid.find('div', class_='slide-track')
+        if not slide_track:
+            raise Exception("No se encontró el div con clase 'slide-track' dentro de container-fluid compra")
+        
+        logger.info("✅ Paso 2: Encontrado div slide-track")
+        
+        # Paso 3: Buscar div con clase "row mb-15" dentro de slide-track
+        row_mb15 = slide_track.find('div', class_='row mb-15')
+        if not row_mb15:
+            raise Exception("No se encontró el div con clase 'row mb-15' dentro de slide-track")
+        
+        logger.info("✅ Paso 3: Encontrado div row mb-15")
+        
+        # Paso 4: Buscar div con clase "col-8 pl-0" dentro de row mb-15
+        col_8_pl0 = row_mb15.find('div', class_='col-8 pl-0')
+        if not col_8_pl0:
+            raise Exception("No se encontró el div con clase 'col-8 pl-0' dentro de row mb-15")
+        
+        logger.info("✅ Paso 4: Encontrado div col-8 pl-0")
+        
+        # Buscar el párrafo con clase "small" que contenga "USD"
+        usd_paragraph = col_8_pl0.find('p', class_='small', string=lambda text: text and 'USD' in text)
+        if not usd_paragraph:
+            # Buscar alternativamente por texto que contenga "USD" en cualquier párrafo small
+            usd_paragraph = col_8_pl0.find('p', class_='small')
+            if usd_paragraph and 'USD' not in usd_paragraph.get_text():
+                usd_paragraph = None
+        
+        if not usd_paragraph:
+            raise Exception("No se encontró el párrafo con clase 'small' que contenga 'USD' dentro de col-8 pl-0")
+        
+        logger.info("✅ Paso 5: Encontrado párrafo con USD")
+        
+        # Paso 5: Regresar al div slide-track (paso 2) y buscar el párrafo con clase "small" que contenga "Compra" y "Venta"
+        # Buscar todos los párrafos con clase "small" dentro de slide-track
+        price_paragraphs = slide_track.find_all('p', class_='small')
+        
+        price_paragraph = None
+        for p in price_paragraphs:
+            text = p.get_text()
+            if 'Compra' in text and 'Venta' in text:
+                price_paragraph = p
+                break
+        
+        if not price_paragraph:
+            raise Exception("No se encontró el párrafo con clase 'small' que contenga 'Compra' y 'Venta' dentro de slide-track")
+        
+        price_text = price_paragraph.get_text()
+        logger.info(f"📊 Texto de precios encontrado: {price_text}")
+        
+        # Extraer precios usando regex
+        # Patrón para encontrar "Compra: X.XXXXX" y "Venta: X.XXXXX"
+        compra_pattern = r'Compra:\s*(\d+[.,]\d+)'
+        venta_pattern = r'Venta:\s*(\d+[.,]\d+)'
+        
+        compra_match = re.search(compra_pattern, price_text)
+        venta_match = re.search(venta_pattern, price_text)
+        
+        if not compra_match or not venta_match:
+            raise Exception(f"No se pudieron extraer los precios del texto: {price_text}")
+        
+        # Convertir a float (reemplazar coma por punto)
+        compra_price = float(compra_match.group(1).replace(',', '.'))
+        venta_price = float(venta_match.group(1).replace(',', '.'))
+        
+        # Validar que los precios sean razonables
+        if not validate_rate_value(compra_price) or not validate_rate_value(venta_price):
+            raise Exception(f"Precios fuera del rango esperado: Compra={compra_price}, Venta={venta_price}")
+        
+        # Crear el resultado
+        result = {
+            "usd_ves_compra": compra_price,
+            "usd_ves_venta": venta_price,
+            "usd_ves_promedio": round((compra_price + venta_price) / 2, 4),
+            "timestamp": datetime.now().isoformat(),
+            "source": "italcambios",
+            "scraping_method": "web_scraping",
+            "url": url
+        }
+        
+        logger.info(f"✅ Italcambios scraping exitoso: Compra={compra_price}, Venta={venta_price}")
+        
+        # Guardar en base de datos
+        try:
+            await optimized_db.upsert_current_rate_fast(data=result)
+            logger.info("💾 Italcambios rates guardados en base de datos")
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudieron guardar Italcambios rates en BD: {e}")
+        
+        return {"status": "success", "data": result}
+        
+    except Exception as e:
+        logger.error(f"❌ Error en scraping de Italcambios: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+async def update_italcambios_rates() -> Dict[str, any]:
+    """
+    Actualizar cotizaciones de Italcambios
+    """
+    try:
+        logger.info("🏦 Obteniendo cotizaciones de Italcambios...")
+        
+        # Usar la función de scraping real
+        result = await scrape_italcambios_rates()
+        
+        if result["status"] == "success":
+            data = result["data"]
+            logger.info(f"✅ Italcambios obtenido: Compra={data['usd_ves_compra']}, Venta={data['usd_ves_venta']}")
+        else:
+            logger.error(f"❌ Error obteniendo datos de Italcambios: {result['error']}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo datos de Italcambios: {e}")
+        return {"status": "error", "error": str(e)}

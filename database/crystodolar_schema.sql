@@ -270,6 +270,14 @@ INSERT INTO exchanges (name, code, type, description, operating_hours, update_fr
   'Mercado P2P de Binance para Venezuela',
   '{"start": "00:00", "end": "23:59", "timezone": "UTC", "days": [0,1,2,3,4,5,6]}'::jsonb,
   300
+),
+(
+  'Italcambios', 
+  'ITALCAMBIOS', 
+  'fiat', 
+  'Casa de cambio Italcambios - Cotizaciones USD/VES',
+  '{"start": "08:00", "end": "18:00", "timezone": "VET", "days": [1,2,3,4,5,6]}'::jsonb,
+  600
 );
 
 -- Insertar pares de monedas
@@ -286,7 +294,8 @@ SELECT id, true, 'open' FROM exchanges;
 INSERT INTO current_rates (exchange_code, currency_pair, buy_price, sell_price, source) VALUES
 ('BCV', 'USD/VES', 36.50, 36.50, 'initial_data'),
 ('BCV', 'EUR/VES', 39.50, 39.50, 'initial_data'),
-('BINANCE_P2P', 'USDT/VES', 37.20, 37.80, 'initial_data')
+('BINANCE_P2P', 'USDT/VES', 37.20, 37.80, 'initial_data'),
+('ITALCAMBIOS', 'USD/VES', 150.00, 155.00, 'initial_data')
 ON CONFLICT (exchange_code, currency_pair) DO NOTHING;
 
 -- ========================================

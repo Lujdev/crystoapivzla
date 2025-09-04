@@ -67,14 +67,13 @@ OPTIMIZED_QUERIES = {
     
     # Operaciones de escritura optimizadas
     "upsert_current_rate": """
-        INSERT INTO current_rates (exchange_code, currency_pair, buy_price, sell_price, avg_price,
+        INSERT INTO current_rates (exchange_code, currency_pair, buy_price, sell_price,
                                  variation_24h, volume_24h, source, last_update, market_status)
-        VALUES ($1, $2, $3::DECIMAL, $4::DECIMAL, ($3::DECIMAL + $4::DECIMAL) / 2, $5::DECIMAL, $6::DECIMAL, $7, NOW(), 'active')
+        VALUES ($1, $2, $3::DECIMAL, $4::DECIMAL, $5::DECIMAL, $6::DECIMAL, $7, NOW(), 'active')
         ON CONFLICT (exchange_code, currency_pair) 
         DO UPDATE SET 
             buy_price = EXCLUDED.buy_price,
             sell_price = EXCLUDED.sell_price,
-            avg_price = (EXCLUDED.buy_price + EXCLUDED.sell_price) / 2,
             variation_24h = EXCLUDED.variation_24h,
             volume_24h = EXCLUDED.volume_24h,
             source = EXCLUDED.source,
@@ -243,18 +242,77 @@ class OptimizedDatabaseService:
     
     @staticmethod
     async def upsert_current_rate_fast(
-        exchange_code: str,
-        currency_pair: str, 
-        buy_price: float,
-        sell_price: float,
+        exchange_code: str | None = None,
+        currency_pair: str | None = None, 
+        buy_price: float | None = None,
+        sell_price: float | None = None,
         variation_24h: float = 0,
         volume_24h: float | None = None,
-        source: str = "api"
+        source: str = "api",
+        data: dict | None = None
     ) -> bool:
         """
         Insertar/actualizar current_rate usando query directa en Supabase
+        Soporta tanto parámetros individuales como diccionario de datos
         """
         try:
+            # Si se proporciona un diccionario de datos, extraer los valores
+            if data:
+                if isinstance(data, dict):
+                    # Manejar diferentes formatos de datos según la fuente
+                    if 'usd_ves_compra' in data and 'usd_ves_venta' in data:
+                        # Formato de ITALCAMBIOS
+                        exchange_code = data.get('source', 'ITALCAMBIOS').upper()
+                        currency_pair = 'USD/VES'
+                        buy_price = data['usd_ves_compra']
+                        sell_price = data['usd_ves_venta']
+                        source = data.get('scraping_method', 'web_scraping')
+                    elif 'usd_ves' in data and 'eur_ves' in data:
+                        # Formato de BCV - Necesitamos hacer dos upserts: uno para USD/VES y otro para EUR/VES
+                        # Primero USD/VES
+                        await OptimizedDatabaseService._upsert_single_rate(
+                            data.get('source', 'BCV').upper(),
+                            'USD/VES',
+                            data['usd_ves'],
+                            data['usd_ves'],  # BCV tiene un solo precio
+                            data.get('scraping_method', 'web_scraping')
+                        )
+                        # Luego EUR/VES
+                        await OptimizedDatabaseService._upsert_single_rate(
+                            data.get('source', 'BCV').upper(),
+                            'EUR/VES',
+                            data['eur_ves'],
+                            data['eur_ves'],  # BCV tiene un solo precio
+                            data.get('scraping_method', 'web_scraping')
+                        )
+                        return True  # Ya se guardaron ambos pares
+                    elif 'usdt_ves_buy' in data and 'usdt_ves_sell' in data:
+                        # Formato de Binance P2P (formato individual)
+                        exchange_code = data.get('source', 'BINANCE_P2P').upper()
+                        currency_pair = 'USDT/VES'
+                        buy_price = data['usdt_ves_buy']
+                        sell_price = data['usdt_ves_sell']
+                        source = data.get('api_method', 'official_api')
+                    elif 'buy_usdt' in data and 'sell_usdt' in data:
+                        # Formato de Binance P2P (formato completo)
+                        exchange_code = data.get('source', 'BINANCE_P2P').upper()
+                        currency_pair = 'USDT/VES'
+                        buy_price = data['buy_usdt']['price']
+                        sell_price = data['sell_usdt']['price']
+                        source = data.get('api_method', 'official_api')
+                    else:
+                        # Formato genérico
+                        exchange_code = data.get('exchange_code', data.get('source', 'UNKNOWN')).upper()
+                        currency_pair = data.get('currency_pair', 'USD/VES')
+                        buy_price = data.get('buy_price', data.get('usd_ves_compra', 0))
+                        sell_price = data.get('sell_price', data.get('usd_ves_venta', 0))
+                        source = data.get('source', 'api')
+            
+            # Validar parámetros requeridos
+            if not exchange_code or not currency_pair or buy_price is None or sell_price is None:
+                logger.error(f"❌ Parámetros insuficientes para upsert: exchange_code={exchange_code}, currency_pair={currency_pair}, buy_price={buy_price}, sell_price={sell_price}")
+                return False
+            
             async with get_optimized_connection() as conn:
                 await conn.fetchval(
                     OPTIMIZED_QUERIES["upsert_current_rate"],
@@ -374,6 +432,36 @@ class OptimizedDatabaseService:
             logger.error(f"❌ Error check_rate_changed en Supabase: {e}")
             return True
     
+    @staticmethod
+    async def _upsert_single_rate(
+        exchange_code: str,
+        currency_pair: str,
+        buy_price: float,
+        sell_price: float,
+        source: str,
+        variation_24h: float = 0,
+        volume_24h: float = 0
+    ) -> bool:
+        """
+        Método auxiliar para hacer upsert de un solo par de monedas
+        """
+        try:
+            async with get_optimized_connection() as conn:
+                await conn.fetchval(
+                    OPTIMIZED_QUERIES["upsert_current_rate"],
+                    exchange_code.upper(),
+                    currency_pair.upper(), 
+                    buy_price,
+                    sell_price,
+                    variation_24h,
+                    volume_24h,
+                    source
+                )
+                return True
+        except Exception as e:
+            logger.error(f"❌ Error upsert single rate {exchange_code} {currency_pair}: {e}")
+            return False
+
     @staticmethod
     async def get_pool_stats() -> dict[str, Any]:
         """
