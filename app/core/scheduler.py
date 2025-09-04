@@ -13,7 +13,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.database import cleanup_old_data
-from app.services.data_fetcher import update_all_rates, scrape_bcv_rates, fetch_binance_p2p_complete
+from app.services.data_fetcher import update_all_rates, scrape_bcv_rates, fetch_binance_p2p_complete, scrape_italcambios_rates
 
 
 # Instancia global del scheduler
@@ -73,7 +73,17 @@ def start_scheduler() -> None:
         misfire_grace_time=3600  # 1 hora de gracia
     )
     
-    # Tarea 5: Health check de APIs externas (cada 14 minutos)
+    # Tarea 5: Actualizar solo cotizaciones Italcambios (cada 10 minutos)
+    scheduler.add_job(
+        func=scheduled_update_italcambios,
+        trigger=IntervalTrigger(minutes=10),
+        id="update_italcambios_rates",
+        name="Actualizar cotizaciones Italcambios",
+        replace_existing=True,
+        misfire_grace_time=1800  # 30 minutos de gracia
+    )
+    
+    # Tarea 6: Health check de APIs externas (cada 14 minutos)
     scheduler.add_job(
         func=scheduled_health_check,
         trigger=IntervalTrigger(minutes=14),
@@ -182,12 +192,16 @@ async def scheduled_update_all_rates() -> None:
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
             
-            if result.get("bcv", {}).get("status") == "success" and result.get("binance_p2p", {}).get("status") == "success":
+            success_count = sum(1 for exchange, data in result.items() 
+                               if isinstance(data, dict) and data.get("status") == "success")
+            total_exchanges = len([k for k in result.keys() if k != "timestamp"])
+            
+            if success_count == total_exchanges:
                 # Obtener estadísticas del pool
                 pool_stats = await optimized_db.get_pool_stats()
-                logger.info(f"✅ [SCHEDULER-OPTIMIZED] Actualización exitosa en {duration:.2f}s - Pool: {pool_stats['size']}/{pool_stats['max_size']} conexiones")
+                logger.info(f"✅ [SCHEDULER-OPTIMIZED] Todas las cotizaciones actualizadas exitosamente en {duration:.2f}s - Pool: {pool_stats['size']}/{pool_stats['max_size']} conexiones")
             else:
-                logger.warning(f"⚠️ [SCHEDULER-OPTIMIZED] Algunas cotizaciones fallaron en {duration:.2f}s: {result}")
+                logger.warning(f"⚠️ [SCHEDULER-OPTIMIZED] {success_count}/{total_exchanges} cotizaciones actualizadas en {duration:.2f}s: {result}")
                 
         except ImportError:
             # Fallback al método original si hay problemas con el optimizado
@@ -197,10 +211,14 @@ async def scheduled_update_all_rates() -> None:
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
             
-            if result.get("bcv", {}).get("status") == "success" and result.get("binance_p2p", {}).get("status") == "success":
+            success_count = sum(1 for exchange, data in result.items() 
+                               if isinstance(data, dict) and data.get("status") == "success")
+            total_exchanges = len([k for k in result.keys() if k != "timestamp"])
+            
+            if success_count == total_exchanges:
                 logger.info(f"✅ [SCHEDULER] Todas las cotizaciones actualizadas (fallback) en {duration:.2f}s")
             else:
-                logger.warning(f"⚠️ [SCHEDULER] Algunas cotizaciones fallaron (fallback) en {duration:.2f}s: {result}")
+                logger.warning(f"⚠️ [SCHEDULER] {success_count}/{total_exchanges} cotizaciones actualizadas (fallback) en {duration:.2f}s: {result}")
         
     except Exception as e:
         end_time = datetime.now()
@@ -214,11 +232,12 @@ async def update_all_rates_optimized() -> dict[str, Any]:
     """
     results = {
         "bcv": {"status": "pending"},
-        "binance_p2p": {"status": "pending"}
+        "binance_p2p": {"status": "pending"},
+        "italcambios": {"status": "pending"}
     }
     
     # Importar servicios
-    from app.services.data_fetcher import scrape_bcv_rates, fetch_binance_p2p_complete
+    from app.services.data_fetcher import scrape_bcv_rates, fetch_binance_p2p_complete, scrape_italcambios_rates
     from app.core.database_optimized import optimized_db
     
     # Actualizar BCV
@@ -294,6 +313,39 @@ async def update_all_rates_optimized() -> dict[str, Any]:
         logger.error(f"❌ [SCHEDULER-OPT] Error actualizando Binance P2P: {e}")
         results["binance_p2p"] = {"status": "error", "error": str(e)}
     
+    # Actualizar Italcambios
+    try:
+        logger.info("🏦 [SCHEDULER-OPT] Actualizando Italcambios...")
+        italcambios_result = await scrape_italcambios_rates()
+        results["italcambios"] = italcambios_result
+        
+        if italcambios_result.get("status") == "success":
+            data = italcambios_result.get("data", {})
+            
+            # Guardar usando prepared statements
+            if data.get("usd_ves_compra") and data.get("usd_ves_venta"):
+                compra_price = data["usd_ves_compra"]
+                venta_price = data["usd_ves_venta"]
+                avg_price = (compra_price + venta_price) / 2
+                
+                await optimized_db.upsert_current_rate_fast(
+                    "ITALCAMBIOS", "USD/VES", compra_price, venta_price,
+                    source="italcambios_web_scraping"
+                )
+                
+                # También en historial si cambió significativamente
+                if await optimized_db.check_rate_changed_fast("ITALCAMBIOS", "USD/VES", avg_price):
+                    await optimized_db.insert_rate_history_fast(
+                        "ITALCAMBIOS", "USD/VES", compra_price, venta_price, avg_price,
+                        source="scheduler_optimized", api_method="web_scraping", trade_type="fiat"
+                    )
+            
+            logger.info("✅ [SCHEDULER-OPT] Italcambios actualizado con prepared statements")
+        
+    except Exception as e:
+        logger.error(f"❌ [SCHEDULER-OPT] Error actualizando Italcambios: {e}")
+        results["italcambios"] = {"status": "error", "error": str(e)}
+    
     return results
 
 
@@ -347,6 +399,35 @@ async def scheduled_update_binance() -> None:
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
         logger.error(f"❌ [SCHEDULER-BINANCE] Error actualizando Binance P2P después de {duration:.2f}s: {e}")
+
+
+async def scheduled_update_italcambios() -> None:
+    """
+    Tarea programada: Actualizar solo cotizaciones Italcambios
+    Se ejecuta cada 10 minutos
+    """
+    from datetime import datetime
+    start_time = datetime.now()
+    
+    try:
+        logger.info(f"🏦 [SCHEDULER-ITALCAMBIOS] Iniciando scraping Italcambios - {start_time.strftime('%H:%M:%S')}")
+        result = await scrape_italcambios_rates()
+        
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        if result.get("status") == "success":
+            data = result.get("data", {})
+            compra = data.get("usd_ves_compra", 0)
+            venta = data.get("usd_ves_venta", 0)
+            logger.info(f"✅ [SCHEDULER-ITALCAMBIOS] Cotizaciones Italcambios actualizadas en {duration:.2f}s - Compra: {compra}, Venta: {venta}")
+        else:
+            logger.error(f"❌ [SCHEDULER-ITALCAMBIOS] Error en Italcambios después de {duration:.2f}s: {result.get('error', 'Error desconocido')}")
+        
+    except Exception as e:
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        logger.error(f"❌ [SCHEDULER-ITALCAMBIOS] Error actualizando Italcambios después de {duration:.2f}s: {e}")
 
 
 async def scheduled_health_check() -> None:

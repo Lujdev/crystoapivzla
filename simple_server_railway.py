@@ -384,7 +384,8 @@ app.add_middleware(
 )
 
 # Incluir routers
-# app.include_router(example_router, prefix="/api/v1", tags=["examples"])  # ELIMINADO: example_router no existe
+from app.api.v1.endpoints.rates import router as rates_router
+app.include_router(rates_router, prefix="/api/v1/rates", tags=["rates"])
 
 # ==========================================
 # Endpoints de la API

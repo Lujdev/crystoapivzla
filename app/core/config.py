@@ -4,9 +4,10 @@ Manejo de variables de entorno con Pydantic Settings
 """
 
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, field_validator
 from typing import List, Optional
 import os
+import json
 
 
 class Settings(BaseSettings):
@@ -80,13 +81,23 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     
     # CORS
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://crystoapivzla.site",
-"https://www.crystoapivzla.site"
-    ]
+    CORS_ORIGINS: str = Field(
+        default="http://localhost:3000,http://localhost:3001,https://crystoapivzla.site,https://www.crystoapivzla.site",
+        description="Lista de orígenes permitidos para CORS separados por comas"
+    )
     CORS_ALLOW_CREDENTIALS: bool = True
+    
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """Convertir CORS_ORIGINS string a lista"""
+        if not self.CORS_ORIGINS:
+            return [
+                "http://localhost:3000",
+                "http://localhost:3001",
+                "https://crystoapivzla.site",
+                "https://www.crystoapivzla.site"
+            ]
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(',') if origin.strip()]
     
     # Background Tasks
     SCHEDULER_ENABLED: bool = True
