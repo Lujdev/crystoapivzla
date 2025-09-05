@@ -394,11 +394,17 @@ app.include_router(rates_router, prefix="/api/v1/rates", tags=["rates"])
 @app.get("/")
 async def root():
     """Endpoint raíz de la API."""
+    from app.services.exchange_registry import exchange_fetcher
+    
+    # Obtener fuentes dinámicamente
+    active_exchanges = exchange_fetcher.registry.get_active_exchanges()
+    sources = [ex.name for ex in active_exchanges]
+    
     data = {
         "message": "CrystoAPIVzla API Simple",
         "version": "1.0.0",
         "description": "Cotizaciones USDT/VES en tiempo real",
-        "sources": ["BCV", "Binance P2P"],
+        "sources": sources,
         "docs": "/docs",
         "status": "operational",
         "environment": os.getenv("ENVIRONMENT", "development")
@@ -1100,67 +1106,29 @@ async def get_current_rates(
             }
         
         # ACTUALIZACIÓN CONDICIONAL: Solo si los datos están desactualizados (>30 min)
-        update_results = {"bcv": {"status": "skipped"}, "binance_p2p": {"status": "skipped"}}
         needs_update = await _should_update_rates()
         
         if needs_update:
             print("🔄 Datos desactualizados, actualizando fuentes...")
             
-            # Actualizar BCV si se solicita o si no se especifica exchange_code
-            if exchange_code is None or exchange_code.upper() == "BCV":
-                try:
-                    from app.services.data_fetcher import scrape_bcv_rates
-                    print("🏦 Actualizando tasas del BCV...")
-                    bcv_result = await scrape_bcv_rates()
-                    update_results["bcv"] = bcv_result
-                    
-                    if bcv_result.get("status") == "success":
-                        # Guardar usando servicio optimizado para Supabase
-                        data = bcv_result.get("data", {})
-                        if data.get("usd_ves"):
-                            await optimized_db.upsert_current_rate_fast(
-                                "BCV", "USD/VES", data["usd_ves"], data["usd_ves"],
-                                source="bcv_web_scraping"
-                            )
-                        if data.get("eur_ves", 0) > 0:
-                            await optimized_db.upsert_current_rate_fast(
-                                "BCV", "EUR/VES", data["eur_ves"], data["eur_ves"],
-                                source="bcv_web_scraping"
-                            )
-                        print(f"✅ BCV actualizado y guardado en Supabase")
-                    else:
-                        print(f"⚠️ Error actualizando BCV: {bcv_result.get('error', 'Error desconocido')}")
-                except Exception as e:
-                    print(f"⚠️ Error actualizando BCV: {e}")
-                    update_results["bcv"] = {"status": "error", "error": str(e)}
+            # Usar el sistema escalable de exchanges
+            from app.services.exchange_registry import exchange_fetcher
             
-            # Actualizar Binance P2P si se solicita o si no se especifica exchange_code
-            if exchange_code is None or exchange_code.upper() == "BINANCE_P2P":
-                try:
-                    from app.services.data_fetcher import fetch_binance_p2p_complete
-                    print("🟡 Actualizando tasas de Binance P2P...")
-                    binance_result = await fetch_binance_p2p_complete()
-                    update_results["binance_p2p"] = binance_result
-                    
-                    if binance_result.get("status") == "success":
-                        # Guardar usando servicio optimizado para Supabase
-                        data = binance_result.get("data", {})
-                        if data.get("buy_usdt") and data.get("sell_usdt"):
-                            buy_price = data["buy_usdt"]["price"]
-                            sell_price = data["sell_usdt"]["price"]
-                            await optimized_db.upsert_current_rate_fast(
-                                "BINANCE_P2P", "USDT/VES", buy_price, sell_price,
-                                volume_24h=data.get("market_analysis", {}).get("volume_24h", 0),
-                                source="binance_p2p_api"
-                            )
-                        print(f"✅ Binance P2P actualizado y guardado en Supabase")
-                    else:
-                        print(f"⚠️ Error actualizando Binance P2P: {binance_result.get('error', 'Error desconocido')}")
-                except Exception as e:
-                    print(f"⚠️ Error actualizando Binance P2P: {e}")
-                    update_results["binance_p2p"] = {"status": "error", "error": str(e)}
+            # Obtener datos de todos los exchanges o uno específico
+            update_results = await exchange_fetcher.fetch_all_exchanges(exchange_code)
+            
+            # Guardar datos en la base de datos
+            for exchange_code_key, result in update_results.items():
+                if result.get("status") == "success":
+                    await exchange_fetcher.save_exchange_data(exchange_code_key.upper(), result)
+                    print(f"✅ {exchange_code_key.upper()} actualizado y guardado en Supabase")
+                elif result.get("status") == "error":
+                    print(f"⚠️ Error actualizando {exchange_code_key.upper()}: {result.get('error', 'Error desconocido')}")
+                elif result.get("status") == "skipped":
+                    print(f"⏭️ {exchange_code_key.upper()} omitido: {result.get('reason', 'Razón desconocida')}")
         else:
             print("⚡ Datos están actualizados, usando caché/DB directamente")
+            update_results = {}
         
         # Obtener datos desde Supabase optimizada (Transaction Mode)
         rates = await optimized_db.get_current_rates_fast(exchange_code, currency_pair)
@@ -1846,28 +1814,65 @@ async def get_bcv_rate():
             "timestamp": datetime.now().isoformat()
         }
 
+@app.get("/api/v1/rates/italcambios")
+async def get_italcambios_rate():
+    """Cotización de Italcambios (Casa de cambio)."""
+    try:
+        from app.services.data_fetcher import scrape_italcambios_rates
+        italcambios_data = await scrape_italcambios_rates()
+        if italcambios_data["status"] == "success":
+            # Validar estructura de datos Italcambios
+            if "data" not in italcambios_data or "usd_ves_compra" not in italcambios_data["data"]:
+                return {
+                    "status": "error",
+                    "error": "Estructura de datos Italcambios inválida",
+                    "timestamp": datetime.now().isoformat()
+                }
+            data = italcambios_data["data"]
+            return {
+                "status": "success",
+                "data": {
+                    "id": 1,
+                    "exchange_code": "italcambios",
+                    "currency_pair": "USD/VES",
+                    "base_currency": "USD",
+                    "quote_currency": "VES",
+                    "buy_price": data["usd_ves_compra"],
+                    "sell_price": data["usd_ves_venta"],
+                    "avg_price": data["usd_ves_promedio"],
+                    "volume": None,
+                    "volume_24h": None,
+                    "source": "italcambios",
+                    "api_method": "web_scraping",
+                    "trade_type": "fiat_exchange",
+                    "timestamp": data["timestamp"],
+                    "created_at": data["timestamp"]
+                }
+            }
+        else:
+            return {
+                "status": "error",
+                "error": "No se pudo obtener cotización de Italcambios",
+                "timestamp": datetime.now().isoformat()
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"Error obteniendo Italcambios: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }
+
 @app.get("/api/v1/exchanges")
 async def get_exchanges():
     """Lista de exchanges disponibles."""
+    from app.services.exchange_registry import exchange_fetcher
+    
+    exchanges_data = exchange_fetcher.get_exchanges_info()
+    
     return {
         "status": "success",
-        "data": [
-            {
-                "name": "Banco Central de Venezuela",
-                "code": "BCV",
-                "type": "official",
-                "description": "Cotizaciones oficiales del gobierno",
-                "is_active": True
-            },
-            {
-                "name": "Binance P2P",
-                "code": "BINANCE_P2P",
-                "type": "crypto",
-                "description": "Mercado P2P de criptomonedas",
-                "is_active": True
-            }
-        ],
-        "count": 2
+        "data": exchanges_data,
+        "count": len(exchanges_data)
     }
 
 @app.get("/api/v1/rates/compare")
