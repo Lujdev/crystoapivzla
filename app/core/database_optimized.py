@@ -9,7 +9,6 @@ from typing import AsyncGenerator, Any, Optional
 from contextlib import asynccontextmanager
 from loguru import logger
 from datetime import datetime
-import json
 
 from app.core.config import settings
 
@@ -478,9 +477,22 @@ class OptimizedDatabaseService:
         """
         try:
             async with get_optimized_connection() as conn:
+                # PRIMERO: Verificar si hay registros en rate_history para este exchange/par
+                history_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM rate_history WHERE exchange_code = $1 AND currency_pair = $2",
+                    exchange_code.upper(), currency_pair.upper()
+                )
+                
+                # Si no hay registros en rate_history, SIEMPRE insertar el primero
+                if history_count == 0:
+                    logger.info(f"🆕 Primera inserción en rate_history: {exchange_code} {currency_pair} - {new_price}")
+                    return True
+                
+                # SEGUNDO: Si ya hay registros en rate_history, verificar cambios con current_rates
                 row = await conn.fetchrow(OPTIMIZED_QUERIES["check_rate_changed"], exchange_code.upper(), currency_pair.upper())
                 
                 if not row:
+                    logger.info(f"🆕 Nueva tasa en current_rates: {exchange_code} {currency_pair} - {new_price}")
                     return True  # Es nueva, insertar
                 
                 current_buy = float(row["buy_price"]) if row["buy_price"] else 0
@@ -495,15 +507,18 @@ class OptimizedDatabaseService:
                     changed = price_diff > tolerance
                     
                     if changed:
-                        logger.debug(f"🔄 Tasa cambió: {exchange_code} {currency_pair} - {price_diff*100:.2f}%")
+                        logger.info(f"🔄 Tasa cambió: {exchange_code} {currency_pair} - {price_diff*100:.2f}% (actual: {current_price}, nuevo: {new_price})")
+                    else:
+                        logger.info(f"⏭️ Tasa sin cambio: {exchange_code} {currency_pair} - {price_diff*100:.2f}% (actual: {current_price}, nuevo: {new_price})")
                     
                     return changed
                 
+                logger.info(f"🆕 Tasa sin precio anterior: {exchange_code} {currency_pair} - {new_price}")
                 return True  # Si no hay precio anterior, insertar
                 
         except Exception as e:
             logger.error(f"❌ Error check_rate_changed en Supabase: {e}")
-            return True
+            return True  # En caso de error, insertar para no perder datos
     
     @staticmethod
     async def _upsert_single_rate(

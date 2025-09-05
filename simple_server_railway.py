@@ -22,9 +22,7 @@ limitations under the License.
 """
 
 import os
-import sys
 import warnings
-import ssl
 from datetime import datetime
 from typing import Any, Optional
 from contextlib import asynccontextmanager
@@ -220,16 +218,8 @@ async def check_rate_changed(exchange_code: str, currency_pair: str, new_price: 
                     min_diff = min(buy_diff, sell_diff) if current_buy > 0 and current_sell > 0 else max(buy_diff, sell_diff)
                     
                     if min_diff > tolerance:
-                        print(f"🔄 Tasa cambió: {exchange_code} {currency_pair}")
-                        print(f"   Precio anterior: Buy={current_buy}, Sell={current_sell}")
-                        print(f"   Nuevo precio: {new_price}")
-                        print(f"   Diferencia mínima: {min_diff*100:.2f}% (tolerancia: {tolerance*100}%)")
                         return True
                     else:
-                        print(f"✅ Tasa sin cambios: {exchange_code} {currency_pair} (tolerancia: {tolerance*100}%)")
-                        print(f"   Precio anterior: Buy={current_buy}, Sell={current_sell}")
-                        print(f"   Nuevo precio: {new_price}")
-                        print(f"   Diferencia mínima: {min_diff*100:.2f}%")
                         return False
                 else:
                     # Para otros exchanges (BCV, etc.), usar lógica simple
@@ -239,26 +229,17 @@ async def check_rate_changed(exchange_code: str, currency_pair: str, new_price: 
                         price_diff = abs(new_price - current_price) / current_price
                         
                         if price_diff > tolerance:
-                            print(f"🔄 Tasa cambió: {exchange_code} {currency_pair}")
-                            print(f"   Precio anterior: {current_price} → Nuevo: {new_price}")
-                            print(f"   Diferencia: {price_diff*100:.2f}% (tolerancia: {tolerance*100}%)")
                             return True
                         else:
-                            print(f"✅ Tasa sin cambios: {exchange_code} {currency_pair} (tolerancia: {tolerance*100}%)")
-                            print(f"   Precio anterior: {current_price} → Nuevo: {new_price}")
-                            print(f"   Diferencia: {price_diff*100:.2f}%")
                             return False
                     else:
                         # Si no hay precio anterior, insertar
-                        print(f"🆕 Nueva tasa sin precio anterior: {exchange_code} {currency_pair}")
                         return True
         
         # Si no existe en current_rates, insertar
-        print(f"🆕 Nueva tasa: {exchange_code} {currency_pair}")
         return True
         
     except Exception as e:
-        print(f"⚠️ Error verificando cambios de tasa: {e}")
         return True  # En caso de error, insertar por seguridad
 
 # ==========================================
@@ -298,9 +279,9 @@ def invalidate_cache_task():
     """Tarea programada para invalidar caché automáticamente."""
     try:
         cache_service.invalidate_all()
-        print(f"✅ Caché invalidado automáticamente - {datetime.now().isoformat()}")
+        pass  # Caché invalidado automáticamente
     except Exception as e:
-        print(f"❌ Error invalidando caché automáticamente: {str(e)}")
+        pass  # Error invalidando caché automáticamente
 
 # ==========================================
 # Eventos de aplicación con Lifespan
@@ -315,14 +296,12 @@ async def lifespan(app: FastAPI):
         try:
             from app.core.database_optimized import init_optimized_db_pool
             await init_optimized_db_pool()
-            print("✅ Pool de conexiones optimizado para Supabase iniciado")
+            pass  # Pool de conexiones optimizado para Supabase iniciado
         except Exception as e:
-            print(f"⚠️ Error iniciando pool optimizado: {e}")
+            pass  # Error iniciando pool optimizado
         
         # Inicializar conexión Redis
         cache_service.connect()
-        print("✅ Conexión Redis establecida")
-        
         # Configurar scheduler para invalidación automática cada 15 minutos (reducido)
         scheduler.add_job(
             invalidate_cache_task,
@@ -334,14 +313,12 @@ async def lifespan(app: FastAPI):
         
         # Iniciar scheduler
         scheduler.start()
-        print("✅ Scheduler iniciado - Invalidación de caché cada 15 minutos")
         
         # Iniciar scheduler de tareas de cotizaciones para Supabase
         start_scheduler()
-        print("✅ Scheduler de cotizaciones para Supabase iniciado")
         
     except Exception as e:
-        print(f"❌ Error en startup: {str(e)}")
+        pass  # Error en startup
     
     yield
     
@@ -349,27 +326,23 @@ async def lifespan(app: FastAPI):
     try:
         # Detener scheduler de cotizaciones
         stop_scheduler()
-        print("✅ Scheduler de cotizaciones detenido")
         
         # Detener scheduler
         if scheduler.running:
             scheduler.shutdown()
-            print("✅ Scheduler detenido")
         
         # Cerrar pool de conexiones de Supabase
         try:
             from app.core.database_optimized import close_optimized_db_pool
             await close_optimized_db_pool()
-            print("✅ Pool de conexiones de Supabase cerrado")
         except Exception as e:
-            print(f"⚠️ Error cerrando pool de Supabase: {e}")
+            pass  # Error cerrando pool de Supabase
         
         # Cerrar conexión Redis
         cache_service.disconnect()
-        print("✅ Conexión Redis cerrada")
         
     except Exception as e:
-        print(f"❌ Error en shutdown: {str(e)}")
+        pass  # Error en shutdown
 
 # ==========================================
 # Crear instancia de FastAPI
@@ -1560,6 +1533,7 @@ async def get_history_stats():
             "data": {},
             "timestamp": datetime.now().isoformat()
         }
+
 
 @app.get("/api/v1/rates/summary")
 async def get_market_summary():
