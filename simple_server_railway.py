@@ -26,12 +26,12 @@ import sys
 import warnings
 import ssl
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 from contextlib import asynccontextmanager
 
 import asyncpg
 from asyncpg.connect_utils import re
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -1323,36 +1323,241 @@ async def _insert_single_rate_to_history(rate: dict[str, Any]) -> None:
 # Ahora se usa el servicio optimizado optimized_db.insert_rate_history_fast()
 
 @app.get("/api/v1/rates/history")
-async def get_all_rate_history(limit: int = 100):
-    """Obtener histórico general desde la base de datos."""
+async def get_all_rate_history(
+    limit: int = Query(default=100, le=1000, description="Límite de registros a obtener"),
+    offset: int = Query(default=0, ge=0, description="Offset para paginación"),
+    exchange_code: Optional[str] = Query(default=None, description="Filtrar por exchange específico"),
+    currency_pair: Optional[str] = Query(default=None, description="Filtrar por par de monedas")
+):
+    """
+    Obtener histórico de tasas desde la base de datos con filtros escalables.
+    
+    - **limit**: Número máximo de registros (máximo 1000)
+    - **offset**: Número de registros a omitir (para paginación)
+    - **exchange_code**: Filtrar por exchange específico (BCV, BINANCE_P2P, ITALCAMBIOS, etc.)
+    - **currency_pair**: Filtrar por par de monedas (USD/VES, USDT/VES, EUR/VES, etc.)
+    """
     if not DATABASE_AVAILABLE:
         return {
             "status": "error",
             "message": "Base de datos no disponible en Railway",
             "data": [],
             "count": 0,
-            "limit": limit,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "has_more": False
+            },
+            "filters": {
+                "exchange_code": exchange_code,
+                "currency_pair": currency_pair
+            },
             "timestamp": datetime.now().isoformat()
         }
     
     try:
-        # Usar OptimizedDatabaseService para Supabase
+        # Usar sistema escalable para validar exchanges
+        from app.services.exchange_registry import exchange_fetcher
+        
+        # Validar exchange_code si se proporciona
+        if exchange_code:
+            exchange_code = exchange_code.upper()
+            if not exchange_fetcher.registry.is_exchange_registered(exchange_code):
+                available_exchanges = exchange_fetcher.registry.get_exchange_codes()
+                return {
+                    "status": "error",
+                    "error": f"Exchange '{exchange_code}' no encontrado",
+                    "available_exchanges": available_exchanges,
+                    "data": [],
+                    "count": 0,
+                    "timestamp": datetime.now().isoformat()
+                }
+        
+        # Obtener datos usando servicio optimizado
         from app.core.database_optimized import optimized_db
-        rates = await optimized_db.get_latest_rates_fast(limit)
+        rates = await optimized_db.get_history_rates_filtered(
+            limit=limit,
+            offset=offset,
+            exchange_code=exchange_code,
+            currency_pair=currency_pair
+        )
+        
+        # Obtener total de registros para paginación
+        total_count = await optimized_db.count_history_rates_filtered(
+            exchange_code=exchange_code,
+            currency_pair=currency_pair
+        )
+        
+        # Calcular si hay más páginas
+        has_more = (offset + len(rates)) < total_count
+        
+        # Obtener información de exchanges disponibles para metadata
+        available_exchanges = exchange_fetcher.registry.get_exchange_codes()
+        active_exchanges_info = [
+            {"code": ex.code, "name": ex.name, "icon": ex.icon}
+            for ex in exchange_fetcher.registry.get_active_exchanges()
+        ]
+        
         return {
             "status": "success",
             "data": rates,
             "count": len(rates),
-            "limit": limit,
+            "total_count": total_count,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None
+            },
+            "filters": {
+                "exchange_code": exchange_code,
+                "currency_pair": currency_pair
+            },
+            "metadata": {
+                "available_exchanges": available_exchanges,
+                "active_exchanges": active_exchanges_info,
+                "supported_currency_pairs": ["USD/VES", "USDT/VES", "EUR/VES", "BTC/VES"]
+            },
             "timestamp": datetime.now().isoformat()
         }
+        
     except Exception as e:
         return {
             "status": "error",
             "error": f"Error obteniendo histórico: {str(e)}",
             "data": [],
             "count": 0,
-            "limit": limit,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "has_more": False
+            },
+            "filters": {
+                "exchange_code": exchange_code,
+                "currency_pair": currency_pair
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.get("/api/v1/rates/history/stats")
+async def get_history_stats():
+    """
+    Obtener estadísticas del histórico de tasas usando la estructura escalable.
+    
+    Retorna información sobre:
+    - Total de registros por exchange
+    - Pares de monedas disponibles
+    - Rango de fechas
+    - Exchanges más activos
+    """
+    if not DATABASE_AVAILABLE:
+        return {
+            "status": "error",
+            "message": "Base de datos no disponible en Railway",
+            "data": {},
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    try:
+        # Usar sistema escalable para obtener información de exchanges
+        from app.services.exchange_registry import exchange_fetcher
+        from app.core.database_optimized import optimized_db
+        
+        async with optimized_db.get_optimized_connection() as conn:
+            # Estadísticas generales
+            total_records = await conn.fetchval("SELECT COUNT(*) FROM rate_history")
+            
+            # Registros por exchange
+            exchange_stats = await conn.fetch("""
+                SELECT exchange_code, COUNT(*) as count, 
+                       MIN(timestamp) as first_record,
+                       MAX(timestamp) as last_record
+                FROM rate_history 
+                GROUP BY exchange_code 
+                ORDER BY count DESC
+            """)
+            
+            # Pares de monedas disponibles
+            currency_pairs = await conn.fetch("""
+                SELECT currency_pair, COUNT(*) as count
+                FROM rate_history 
+                GROUP BY currency_pair 
+                ORDER BY count DESC
+            """)
+            
+            # Actividad por día (últimos 7 días)
+            recent_activity = await conn.fetch("""
+                SELECT DATE(timestamp) as date, COUNT(*) as records
+                FROM rate_history 
+                WHERE timestamp >= NOW() - INTERVAL '7 days'
+                GROUP BY DATE(timestamp)
+                ORDER BY date DESC
+            """)
+            
+            # Obtener información de exchanges registrados
+            registered_exchanges = exchange_fetcher.registry.get_all_exchanges()
+            active_exchanges = exchange_fetcher.registry.get_active_exchanges()
+            
+            # Formatear estadísticas por exchange
+            exchange_stats_formatted = []
+            for stat in exchange_stats:
+                exchange_info = exchange_fetcher.registry.get_exchange(stat["exchange_code"])
+                exchange_stats_formatted.append({
+                    "exchange_code": stat["exchange_code"],
+                    "name": exchange_info.name if exchange_info else stat["exchange_code"],
+                    "icon": exchange_info.icon if exchange_info else "📊",
+                    "total_records": stat["count"],
+                    "first_record": stat["first_record"].isoformat() if stat["first_record"] else None,
+                    "last_record": stat["last_record"].isoformat() if stat["last_record"] else None,
+                    "is_active": exchange_info.is_active if exchange_info else False
+                })
+            
+            # Formatear pares de monedas
+            currency_pairs_formatted = [
+                {
+                    "currency_pair": pair["currency_pair"],
+                    "total_records": pair["count"]
+                }
+                for pair in currency_pairs
+            ]
+            
+            # Formatear actividad reciente
+            recent_activity_formatted = [
+                {
+                    "date": activity["date"].isoformat() if activity["date"] else None,
+                    "records": activity["records"]
+                }
+                for activity in recent_activity
+            ]
+            
+            return {
+                "status": "success",
+                "data": {
+                    "overview": {
+                        "total_records": total_records,
+                        "total_exchanges_with_data": len(exchange_stats),
+                        "total_currency_pairs": len(currency_pairs),
+                        "registered_exchanges": len(registered_exchanges),
+                        "active_exchanges": len(active_exchanges)
+                    },
+                    "exchanges": exchange_stats_formatted,
+                    "currency_pairs": currency_pairs_formatted,
+                    "recent_activity": recent_activity_formatted,
+                    "system_info": {
+                        "scalable_structure": True,
+                        "can_add_exchanges_dynamically": True,
+                        "supports_filtering": True,
+                        "supports_pagination": True
+                    }
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+            
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"Error obteniendo estadísticas del histórico: {str(e)}",
+            "data": {},
             "timestamp": datetime.now().isoformat()
         }
 

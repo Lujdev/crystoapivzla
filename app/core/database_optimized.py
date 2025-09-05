@@ -556,5 +556,102 @@ class OptimizedDatabaseService:
         }
 
 
+    @staticmethod
+    async def get_history_rates_filtered(
+        limit: int = 100,
+        offset: int = 0,
+        exchange_code: Optional[str] = None,
+        currency_pair: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """
+        Obtener histórico de tasas con filtros escalables
+        """
+        try:
+            async with get_optimized_connection() as conn:
+                # Construir query dinámicamente basado en filtros
+                base_query = """
+                    SELECT exchange_code, currency_pair, buy_price, sell_price, avg_price,
+                           volume_24h, source, trade_type, timestamp
+                    FROM rate_history
+                """
+                
+                conditions = []
+                params = []
+                param_count = 1
+                
+                if exchange_code:
+                    conditions.append(f"exchange_code = ${param_count}")
+                    params.append(exchange_code)
+                    param_count += 1
+                
+                if currency_pair:
+                    conditions.append(f"currency_pair = ${param_count}")
+                    params.append(currency_pair)
+                    param_count += 1
+                
+                if conditions:
+                    base_query += " WHERE " + " AND ".join(conditions)
+                
+                base_query += f" ORDER BY timestamp DESC LIMIT ${param_count} OFFSET ${param_count + 1}"
+                params.extend([limit, offset])
+                
+                rows = await conn.fetch(base_query, *params)
+                
+                return [
+                    {
+                        "exchange_code": row["exchange_code"],
+                        "currency_pair": row["currency_pair"],
+                        "buy_price": float(row["buy_price"]) if row["buy_price"] else None,
+                        "sell_price": float(row["sell_price"]) if row["sell_price"] else None,
+                        "avg_price": float(row["avg_price"]) if row["avg_price"] else None,
+                        "volume_24h": float(row["volume_24h"]) if row["volume_24h"] else None,
+                        "source": row["source"],
+                        "trade_type": row["trade_type"],
+                        "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo history rates filtered: {e}")
+            return []
+    
+    @staticmethod
+    async def count_history_rates_filtered(
+        exchange_code: Optional[str] = None,
+        currency_pair: Optional[str] = None
+    ) -> int:
+        """
+        Contar total de registros históricos con filtros
+        """
+        try:
+            async with get_optimized_connection() as conn:
+                # Construir query de conteo dinámicamente
+                base_query = "SELECT COUNT(*) FROM rate_history"
+                
+                conditions = []
+                params = []
+                param_count = 1
+                
+                if exchange_code:
+                    conditions.append(f"exchange_code = ${param_count}")
+                    params.append(exchange_code)
+                    param_count += 1
+                
+                if currency_pair:
+                    conditions.append(f"currency_pair = ${param_count}")
+                    params.append(currency_pair)
+                    param_count += 1
+                
+                if conditions:
+                    base_query += " WHERE " + " AND ".join(conditions)
+                
+                count = await conn.fetchval(base_query, *params)
+                return count or 0
+                
+        except Exception as e:
+            logger.error(f"❌ Error contando history rates: {e}")
+            return 0
+
+
 # Instancia global del servicio optimizado
 optimized_db = OptimizedDatabaseService()
