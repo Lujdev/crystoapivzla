@@ -10,6 +10,7 @@ uvicorn[standard]==0.24.0
 # Database
 asyncpg==0.29.0
 sqlalchemy[asyncio]==2.0.23
+psycopg2-binary>=2.9.0,<3.0.0
 
 # Environment & Configuration
 python-dotenv==1.0.0

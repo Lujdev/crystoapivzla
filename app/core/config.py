@@ -4,9 +4,10 @@ Manejo de variables de entorno con Pydantic Settings
 """
 
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, field_validator
 from typing import List, Optional
 import os
+import json
 
 
 class Settings(BaseSettings):
@@ -15,12 +16,24 @@ class Settings(BaseSettings):
     Compatible con Neon.tech y despliegue en producción
     """
     
-    # Database (Neon.tech)
-    DATABASE_URL: str = "postgresql://localhost/crystoapivzla"
-    NEON_ENDPOINT: Optional[str] = None
-    NEON_DATABASE: str = "crystoapivzla"
-    NEON_USERNAME: Optional[str] = None
-    NEON_PASSWORD: Optional[str] = None
+    # Database (Supabase) - CREDENCIALES EN .env
+    DATABASE_URL: str = Field(
+        default="",
+        description="URL de conexión a Supabase (Transaction Mode - puerto 6543)"
+    )
+    SUPABASE_URL: Optional[str] = Field(
+        default=None,
+        description="URL de Supabase para API"
+    )
+    SUPABASE_ANON_KEY: Optional[str] = Field(
+        default=None,
+        description="Clave anónima de Supabase"
+    )
+    # Connection for migrations (Session mode)
+    DIRECT_DATABASE_URL: str = Field(
+        default="",
+        description="URL de conexión directa a Supabase (Session Mode - puerto 5432)"
+    )
     
     # API Configuration
     API_HOST: str = "0.0.0.0"
@@ -30,7 +43,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     
     # Security
-    SECRET_KEY: str = "change-this-super-secret-key-in-production"
+    SECRET_KEY: str = Field(
+        default="",
+        description="Clave secreta para JWT (OBLIGATORIO en producción)"
+    )
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     
@@ -65,13 +81,23 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     
     # CORS
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://crystoapivzla.site",
-"https://www.crystoapivzla.site"
-    ]
+    CORS_ORIGINS: str = Field(
+        default="http://localhost:3000,http://localhost:3001,https://crystoapivzla.site,https://www.crystoapivzla.site",
+        description="Lista de orígenes permitidos para CORS separados por comas"
+    )
     CORS_ALLOW_CREDENTIALS: bool = True
+    
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """Convertir CORS_ORIGINS string a lista"""
+        if not self.CORS_ORIGINS:
+            return [
+                "http://localhost:3000",
+                "http://localhost:3001",
+                "https://crystoapivzla.site",
+                "https://www.crystoapivzla.site"
+            ]
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(',') if origin.strip()]
     
     # Background Tasks
     SCHEDULER_ENABLED: bool = True
@@ -111,17 +137,18 @@ class Settings(BaseSettings):
     
     @property
     def database_url_async(self) -> str:
-        """URL de base de datos para conexiones asíncronas"""
-        # Para asyncpg, necesitamos limpiar parámetros SSL que no reconoce
-        base_url = self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
-        
-        # Remover parámetros SSL problemáticos para asyncpg
-        if "sslmode" in base_url:
-            # Extraer solo la parte principal de la URL
-            if "?" in base_url:
-                base_url = base_url.split("?")[0]
-        
-        return base_url
+        """URL de base de datos para conexiones asíncronas (Transaction Mode para serverless)"""
+        # Supabase Transaction Mode - NO soporta prepared statements
+        # Eliminar cualquier parámetro SSL explícito para evitar conflictos
+        base_url = self.DATABASE_URL.split('?')[0]  # Quitar parámetros existentes
+        return base_url + "?pgbouncer=true"
+    
+    @property
+    def database_url_direct(self) -> str:
+        """URL de base de datos para conexiones directas (Session Mode para migraciones)"""
+        # Supabase Session Mode - soporta prepared statements
+        # Eliminar cualquier parámetro SSL explícito para evitar conflictos
+        return self.DIRECT_DATABASE_URL.split('?')[0]  # Limpiar parámetros
     
     class Config:
         env_file = ".env"
