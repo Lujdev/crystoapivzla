@@ -257,10 +257,17 @@ async def update_all_rates_optimized() -> dict[str, Any]:
                 )
                 # También en historial si cambió significativamente
                 if await optimized_db.check_rate_changed_fast("BCV", "USD/VES", data["usd_ves"]):
-                    await optimized_db.insert_rate_history_fast(
+                    logger.info(f"🔄 [SCHEDULER-OPT] BCV USD/VES cambió, guardando en rate_history: {data['usd_ves']}")
+                    success = await optimized_db.insert_rate_history_fast(
                         "BCV", "USD/VES", data["usd_ves"], data["usd_ves"], data["usd_ves"],
                         source="scheduler_optimized", api_method="web_scraping", trade_type="official"
                     )
+                    if success:
+                        logger.info("✅ [SCHEDULER-OPT] BCV USD/VES guardado en rate_history")
+                    else:
+                        logger.error("❌ [SCHEDULER-OPT] Error guardando BCV USD/VES en rate_history")
+                else:
+                    logger.info("⏭️ [SCHEDULER-OPT] BCV USD/VES no cambió significativamente, omitiendo rate_history")
             
             if data.get("eur_ves", 0) > 0:
                 await optimized_db.upsert_current_rate_fast(
@@ -302,10 +309,17 @@ async def update_all_rates_optimized() -> dict[str, Any]:
                 
                 # También en historial si cambió significativamente
                 if await optimized_db.check_rate_changed_fast("BINANCE_P2P", "USDT/VES", avg_price):
-                    await optimized_db.insert_rate_history_fast(
+                    logger.info(f"🔄 [SCHEDULER-OPT] BINANCE_P2P USDT/VES cambió, guardando en rate_history: {avg_price}")
+                    success = await optimized_db.insert_rate_history_fast(
                         "BINANCE_P2P", "USDT/VES", buy_price, sell_price, avg_price, volume_24h,
                         source="scheduler_optimized", api_method="official_api", trade_type="p2p"
                     )
+                    if success:
+                        logger.info("✅ [SCHEDULER-OPT] BINANCE_P2P USDT/VES guardado en rate_history")
+                    else:
+                        logger.error("❌ [SCHEDULER-OPT] Error guardando BINANCE_P2P USDT/VES en rate_history")
+                else:
+                    logger.info("⏭️ [SCHEDULER-OPT] BINANCE_P2P USDT/VES no cambió significativamente, omitiendo rate_history")
             
             logger.info("✅ [SCHEDULER-OPT] Binance P2P actualizado con prepared statements")
         
@@ -335,10 +349,17 @@ async def update_all_rates_optimized() -> dict[str, Any]:
                 
                 # También en historial si cambió significativamente
                 if await optimized_db.check_rate_changed_fast("ITALCAMBIOS", "USD/VES", avg_price):
-                    await optimized_db.insert_rate_history_fast(
+                    logger.info(f"🔄 [SCHEDULER-OPT] ITALCAMBIOS USD/VES cambió, guardando en rate_history: {avg_price}")
+                    success = await optimized_db.insert_rate_history_fast(
                         "ITALCAMBIOS", "USD/VES", compra_price, venta_price, avg_price,
                         source="scheduler_optimized", api_method="web_scraping", trade_type="fiat"
                     )
+                    if success:
+                        logger.info("✅ [SCHEDULER-OPT] ITALCAMBIOS USD/VES guardado en rate_history")
+                    else:
+                        logger.error("❌ [SCHEDULER-OPT] Error guardando ITALCAMBIOS USD/VES en rate_history")
+                else:
+                    logger.info("⏭️ [SCHEDULER-OPT] ITALCAMBIOS USD/VES no cambió significativamente, omitiendo rate_history")
             
             logger.info("✅ [SCHEDULER-OPT] Italcambios actualizado con prepared statements")
         
@@ -468,43 +489,3 @@ async def send_telegram_notification(message: str) -> bool:
         return False
 
 
-def trigger_manual_task(task_id: str) -> dict:
-    """
-    Ejecutar tarea manualmente (para testing o admin)
-    """
-    global scheduler
-    
-    if scheduler is None:
-        return {"error": "Scheduler no está activo"}
-    
-    try:
-        job = scheduler.get_job(task_id)
-        if job is None:
-            return {"error": f"Tarea {task_id} no encontrada"}
-        
-        # Ejecutar ahora
-        scheduler.modify_job(task_id, next_run_time=datetime.now())
-        return {"success": f"Tarea {task_id} programada para ejecución inmediata"}
-        
-    except Exception as e:
-        return {"error": f"Error ejecutando tarea {task_id}: {e}"}
-
-
-# ========================================
-# ENDPOINTS PARA ADMINISTRACIÓN
-# ========================================
-
-async def reschedule_job(job_id: str, cron_expression: str) -> dict:
-    """
-    Reprogramar una tarea existente
-    """
-    global scheduler
-    
-    if scheduler is None:
-        return {"error": "Scheduler no está activo"}
-    
-    try:
-        # TODO: Parsear cron_expression y actualizar job
-        return {"success": f"Tarea {job_id} reprogramada"}
-    except Exception as e:
-        return {"error": f"Error reprogramando {job_id}: {e}"}
