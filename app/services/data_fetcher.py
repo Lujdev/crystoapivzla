@@ -528,7 +528,7 @@ async def _fetch_binance_p2p_sell_rates_no_save() -> Dict[str, any]:
                     "best_ad": best_ad_info,
                     "total_ads": len(binance_data["data"]),
                     "timestamp": datetime.now().isoformat(),
-                    "source": "binance_p2p",
+                    "source": "BINANCE_P2P",
                     "api_method": "official_api",
                     "trade_type": "buy_usdt"  # Indicar que es para comprar USDT
                 }
@@ -656,7 +656,7 @@ async def fetch_binance_p2p_sell_rates() -> Dict[str, any]:
                     "best_ad": best_ad_info,
                     "total_ads": len(binance_data["data"]),
                     "timestamp": datetime.now().isoformat(),
-                    "source": "binance_p2p",
+                    "source": "BINANCE_P2P",
                     "api_method": "official_api",
                     "trade_type": "buy_usdt"  # Indicar que es para comprar USDT
                 }
@@ -785,12 +785,13 @@ async def _fetch_binance_p2p_rates_no_save() -> Dict[str, any]:
                 
                 result = {
                     "usdt_ves_buy": lowest_price,  # Mejor precio para vender USDT
+                    "usdt_ves_sell": lowest_price,  # Mismo precio para compra y venta
                     "usdt_ves_avg": round(avg_price, 4),
                     "volume_24h": round(total_volume, 2),
                     "best_ad": best_ad_info,
                     "total_ads": len(binance_data["data"]),
                     "timestamp": datetime.now().isoformat(),
-                    "source": "binance_p2p",
+                    "source": "BINANCE_P2P",
                     "api_method": "official_api",
                     "trade_type": "sell_usdt"  # Indicar que es para vender USDT
                 }
@@ -912,12 +913,13 @@ async def fetch_binance_p2p_rates() -> Dict[str, any]:
                 
                 result = {
                     "usdt_ves_buy": lowest_price,  # Mejor precio para vender USDT
+                    "usdt_ves_sell": lowest_price,  # Mismo precio para compra y venta
                     "usdt_ves_avg": round(avg_price, 4),
                     "volume_24h": round(total_volume, 2),
                     "best_ad": best_ad_info,
                     "total_ads": len(binance_data["data"]),
                     "timestamp": datetime.now().isoformat(),
-                    "source": "binance_p2p",
+                    "source": "BINANCE_P2P",
                     "api_method": "official_api",
                     "trade_type": "sell_usdt"  # Indicar que es para vender USDT
                 }
@@ -1031,14 +1033,12 @@ async def update_binance_p2p_rates() -> Dict[str, any]:
     try:
         logger.info("🟡 Obteniendo cotizaciones de Binance P2P...")
         
-        # Usar la función completa de Binance P2P que obtiene tanto compra como venta
-        result = await fetch_binance_p2p_complete()
+        # Usar la función de API real de Binance P2P
+        result = await fetch_binance_p2p_rates()
         
         if result["status"] == "success":
             data = result["data"]
-            buy_price = data['buy_usdt']['price']
-            sell_price = data['sell_usdt']['price']
-            logger.info(f"✅ Binance P2P obtenido: Buy={buy_price}, Sell={sell_price}")
+            logger.info(f"✅ Binance P2P obtenido: USDT/VES = {data['usdt_ves_buy']} (mejor precio)")
         else:
             logger.error(f"❌ Error obteniendo datos de Binance P2P: {result['error']}")
         

@@ -254,80 +254,153 @@ class OptimizedDatabaseService:
         """
         Insertar/actualizar current_rate usando query directa en Supabase
         Soporta tanto parámetros individuales como diccionario de datos
+        VERSIÓN ESCALABLE: Maneja múltiples pares de monedas por exchange
         """
         try:
-            # Si se proporciona un diccionario de datos, extraer los valores
-            if data:
-                if isinstance(data, dict):
-                    # Manejar diferentes formatos de datos según la fuente
-                    if 'usd_ves_compra' in data and 'usd_ves_venta' in data:
-                        # Formato de ITALCAMBIOS
-                        exchange_code = data.get('source', 'ITALCAMBIOS').upper()
-                        currency_pair = 'USD/VES'
-                        buy_price = data['usd_ves_compra']
-                        sell_price = data['usd_ves_venta']
-                        source = data.get('scraping_method', 'web_scraping')
-                    elif 'usd_ves' in data and 'eur_ves' in data:
-                        # Formato de BCV - Necesitamos hacer dos upserts: uno para USD/VES y otro para EUR/VES
-                        # Primero USD/VES
-                        await OptimizedDatabaseService._upsert_single_rate(
-                            data.get('source', 'BCV').upper(),
-                            'USD/VES',
-                            data['usd_ves'],
-                            data['usd_ves'],  # BCV tiene un solo precio
-                            data.get('scraping_method', 'web_scraping')
-                        )
-                        # Luego EUR/VES
-                        await OptimizedDatabaseService._upsert_single_rate(
-                            data.get('source', 'BCV').upper(),
-                            'EUR/VES',
-                            data['eur_ves'],
-                            data['eur_ves'],  # BCV tiene un solo precio
-                            data.get('scraping_method', 'web_scraping')
-                        )
-                        return True  # Ya se guardaron ambos pares
-                    elif 'usdt_ves_buy' in data and 'usdt_ves_sell' in data:
-                        # Formato de Binance P2P (formato individual)
-                        exchange_code = data.get('source', 'BINANCE_P2P').upper()
-                        currency_pair = 'USDT/VES'
-                        buy_price = data['usdt_ves_buy']
-                        sell_price = data['usdt_ves_sell']
-                        source = data.get('api_method', 'official_api')
-                    elif 'buy_usdt' in data and 'sell_usdt' in data:
-                        # Formato de Binance P2P (formato completo)
-                        exchange_code = data.get('source', 'BINANCE_P2P').upper()
-                        currency_pair = 'USDT/VES'
-                        buy_price = data['buy_usdt']['price']
-                        sell_price = data['sell_usdt']['price']
-                        source = data.get('api_method', 'official_api')
-                    else:
-                        # Formato genérico
-                        exchange_code = data.get('exchange_code', data.get('source', 'UNKNOWN')).upper()
-                        currency_pair = data.get('currency_pair', 'USD/VES')
-                        buy_price = data.get('buy_price', data.get('usd_ves_compra', 0))
-                        sell_price = data.get('sell_price', data.get('usd_ves_venta', 0))
-                        source = data.get('source', 'api')
+            # Si se proporciona un diccionario de datos, procesar múltiples pares
+            if data and isinstance(data, dict):
+                return await OptimizedDatabaseService._process_data_dict(data)
             
-            # Validar parámetros requeridos
+            # Validar parámetros individuales
             if not exchange_code or not currency_pair or buy_price is None or sell_price is None:
                 logger.error(f"❌ Parámetros insuficientes para upsert: exchange_code={exchange_code}, currency_pair={currency_pair}, buy_price={buy_price}, sell_price={sell_price}")
                 return False
             
-            async with get_optimized_connection() as conn:
-                await conn.fetchval(
-                    OPTIMIZED_QUERIES["upsert_current_rate"],
-                    exchange_code.upper(),
-                    currency_pair.upper(), 
-                    buy_price,
-                    sell_price,
-                    variation_24h,
-                    volume_24h or 0,
-                    source
-                )
-                return True
+            # Upsert individual
+            return await OptimizedDatabaseService._upsert_single_rate(
+                exchange_code, currency_pair, buy_price, sell_price, 
+                variation_24h, volume_24h or 0, source
+            )
                 
         except Exception as e:
             logger.error(f"❌ Error upsert current_rate en Supabase: {e}")
+            return False
+    
+    @staticmethod
+    async def _process_data_dict(data: dict) -> bool:
+        """
+        Procesar diccionario de datos y hacer upsert de múltiples pares de monedas
+        VERSIÓN ESCALABLE: Detecta automáticamente todos los pares disponibles
+        """
+        try:
+            exchange_code = data.get('source', data.get('exchange_code', 'UNKNOWN')).upper()
+            source_method = data.get('scraping_method', data.get('api_method', 'api'))
+            success_count = 0
+            total_pairs = 0
+            
+            # 1. DETECTAR FORMATO DE ITALCAMBIOS (USD/VES)
+            if 'usd_ves_compra' in data and 'usd_ves_venta' in data:
+                total_pairs += 1
+                if await OptimizedDatabaseService._upsert_single_rate(
+                    exchange_code, 'USD/VES', 
+                    data['usd_ves_compra'], data['usd_ves_venta'],
+                    0, 0, source_method
+                ):
+                    success_count += 1
+                    logger.info(f"✅ {exchange_code} USD/VES actualizado: {data['usd_ves_compra']}/{data['usd_ves_venta']}")
+            
+            # 2. DETECTAR FORMATO DE BCV (USD/VES y EUR/VES)
+            elif 'usd_ves' in data and 'eur_ves' in data:
+                # USD/VES
+                total_pairs += 1
+                if await OptimizedDatabaseService._upsert_single_rate(
+                    exchange_code, 'USD/VES', 
+                    data['usd_ves'], data['usd_ves'],  # BCV tiene un solo precio
+                    0, 0, source_method
+                ):
+                    success_count += 1
+                    logger.info(f"✅ {exchange_code} USD/VES actualizado: {data['usd_ves']}")
+                
+                # EUR/VES
+                total_pairs += 1
+                if await OptimizedDatabaseService._upsert_single_rate(
+                    exchange_code, 'EUR/VES', 
+                    data['eur_ves'], data['eur_ves'],  # BCV tiene un solo precio
+                    0, 0, source_method
+                ):
+                    success_count += 1
+                    logger.info(f"✅ {exchange_code} EUR/VES actualizado: {data['eur_ves']}")
+            
+            # 3. DETECTAR FORMATO DE BINANCE P2P (USDT/VES)
+            elif 'usdt_ves_buy' in data and 'usdt_ves_sell' in data:
+                total_pairs += 1
+                if await OptimizedDatabaseService._upsert_single_rate(
+                    exchange_code, 'USDT/VES', 
+                    data['usdt_ves_buy'], data['usdt_ves_sell'],
+                    0, data.get('volume_24h', 0), source_method
+                ):
+                    success_count += 1
+                    logger.info(f"✅ {exchange_code} USDT/VES actualizado: {data['usdt_ves_buy']}/{data['usdt_ves_sell']}")
+            
+            # 4. DETECTAR FORMATO DE BINANCE P2P COMPLETO (buy_usdt/sell_usdt)
+            elif 'buy_usdt' in data and 'sell_usdt' in data:
+                total_pairs += 1
+                if await OptimizedDatabaseService._upsert_single_rate(
+                    exchange_code, 'USDT/VES', 
+                    data['buy_usdt']['price'], data['sell_usdt']['price'],
+                    0, data.get('market_analysis', {}).get('volume_24h', 0), source_method
+                ):
+                    success_count += 1
+                    logger.info(f"✅ {exchange_code} USDT/VES actualizado: {data['buy_usdt']['price']}/{data['sell_usdt']['price']}")
+            
+            # 5. FORMATO GENÉRICO (escalable para futuros exchanges)
+            else:
+                # Buscar patrones de pares de monedas en el diccionario
+                currency_pairs_found = []
+                
+                # Patrones comunes para detectar pares de monedas
+                patterns = [
+                    ('usd_ves', 'USD/VES'),
+                    ('eur_ves', 'EUR/VES'), 
+                    ('usdt_ves', 'USDT/VES'),
+                    ('btc_ves', 'BTC/VES'),
+                    ('eth_ves', 'ETH/VES')
+                ]
+                
+                for pattern_key, pair_name in patterns:
+                    # Buscar compra/venta o buy/sell
+                    buy_keys = [f"{pattern_key}_compra", f"{pattern_key}_buy", f"{pattern_key}_purchase"]
+                    sell_keys = [f"{pattern_key}_venta", f"{pattern_key}_sell", f"{pattern_key}_sale"]
+                    
+                    buy_price = None
+                    sell_price = None
+                    
+                    # Buscar precio de compra
+                    for key in buy_keys:
+                        if key in data and data[key] is not None:
+                            buy_price = data[key]
+                            break
+                    
+                    # Buscar precio de venta
+                    for key in sell_keys:
+                        if key in data and data[key] is not None:
+                            sell_price = data[key]
+                            break
+                    
+                    # Si encontramos ambos precios, agregar a la lista
+                    if buy_price is not None and sell_price is not None:
+                        currency_pairs_found.append((pair_name, buy_price, sell_price))
+                
+                # Procesar todos los pares encontrados
+                for pair_name, buy_price, sell_price in currency_pairs_found:
+                    total_pairs += 1
+                    if await OptimizedDatabaseService._upsert_single_rate(
+                        exchange_code, pair_name, buy_price, sell_price,
+                        0, 0, source_method
+                    ):
+                        success_count += 1
+                        logger.info(f"✅ {exchange_code} {pair_name} actualizado: {buy_price}/{sell_price}")
+            
+            # Log del resultado
+            if total_pairs > 0:
+                logger.info(f"📊 {exchange_code}: {success_count}/{total_pairs} pares actualizados correctamente")
+                return success_count > 0
+            else:
+                logger.warning(f"⚠️ {exchange_code}: No se encontraron pares de monedas válidos en los datos")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error procesando diccionario de datos: {e}")
             return False
     
     @staticmethod
@@ -438,9 +511,9 @@ class OptimizedDatabaseService:
         currency_pair: str,
         buy_price: float,
         sell_price: float,
-        source: str,
         variation_24h: float = 0,
-        volume_24h: float = 0
+        volume_24h: float = 0,
+        source: str = "api"
     ) -> bool:
         """
         Método auxiliar para hacer upsert de un solo par de monedas
